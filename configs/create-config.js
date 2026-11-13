@@ -186,7 +186,7 @@ function createModuleConfig({ name, resolve, entry: _entry, library, isWorker })
             }
         }, {
             test: /\.(js|jsx|ts|tsx)$/,
-            exclude: /(node_modules|submodules|three-wasm)/,
+            exclude: (file) => /(?:node_modules|submodules|three-wasm)/.test(file) && !/[\\/]node_modules[\\/]@l2js[\\/]core[\\/]/.test(file),
             use: [
                 {
                     loader: "babel-loader",

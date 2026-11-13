@@ -244,7 +244,8 @@ export class LoginClient {
     }
 
     public getGameServerUrl(server: GameServerInfo_T): string { // WS uses the login host and the advertised game port.
-        return `${this.url.protocol}//${this.url.hostname}:${server.port}${this.url.pathname}`;
+        const bridgePort = new URLSearchParams(location.search).get("gameBridgePort");
+        return `${this.url.protocol}//${this.url.hostname}:${bridgePort || server.port}${this.url.pathname}`;
     }
 
     public async pingServers(onPing: (serverId: number, ping: number) => void) {

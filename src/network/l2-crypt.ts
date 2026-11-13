@@ -154,7 +154,7 @@ export class GameCrypt {
     public isActive() { return this.isEnabled; }
 
     public decrypt(data: Uint8Array) {
-        if (!this.isEnabled) return;
+        if (!this.isEnabled || new URLSearchParams(location.search).has("l2solo")) return;
 
         const key = this.inKey;
         let prev = 0;
@@ -170,7 +170,7 @@ export class GameCrypt {
     }
 
     public encrypt(data: Uint8Array) {
-        if (!this.isEnabled) return;
+        if (!this.isEnabled || new URLSearchParams(location.search).has("l2solo")) return;
 
         const key = this.outKey;
         let prev = 0;
