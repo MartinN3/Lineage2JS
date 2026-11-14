@@ -2797,7 +2797,7 @@ export class RenderManager implements IEngineComponent<GameManager> {
         // this.renderer.setRenderTarget(this.mainRenderTarget);
 
         const worldRenderTarget = this.displayGammaPass.getTarget();
-        const renderToTarget = this.camera.reversedDepth || this.displayGammaEnabled || worldRenderTarget.samples > 0 || this.nameplateScene.children.some(object => object.visible && (object as Sprite).material.visible);
+        const renderToTarget = this.camera.reversedDepth || this.displayGammaEnabled || worldRenderTarget.samples > 0 || this.overHeadAlarm.needsWorldDepth() || this.nameplateScene.children.some(object => object.visible && (object as Sprite).material.visible);
         setReversedDepth(this.renderer, this.camera.reversedDepth);
         this.renderer.setRenderTarget(renderToTarget ? worldRenderTarget : null);
 
@@ -2969,7 +2969,7 @@ export class RenderManager implements IEngineComponent<GameManager> {
     protected drawWorld() {
         const frame = LocalSpaceSkeleton.renderFrame;
         LocalSpaceSkeleton.renderFrame = ++LocalSpaceSkeleton.nextRenderFrame;
-        this.nameplateDepth.begin(this.nameplateScene);
+        this.nameplateDepth.begin(this.nameplateScene, this.overHeadAlarm.needsWorldDepth());
         try {
             const camera = this.bspHelperCamera && this.bspHelperActive ? this.bspHelperCamera : this.camera;
             this.sectorOcclusion.begin(this.camera, camera, this.getSector(camera.position));

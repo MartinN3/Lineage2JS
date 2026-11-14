@@ -28,6 +28,7 @@ export class OverHeadAlarm {
     }
 
     public isLoaded() { return this.actor.children.length > 0; }
+    public needsWorldDepth() { return this.isLoaded() && this.count > 0; }
     public clear() { this.count = 0; }
     public setSize(width: number, height: number) { this.width = width; this.height = height; }
 
@@ -69,6 +70,7 @@ ${shader.fragmentShader}`.replace("void main() {", `void main() {
     }
 
     public draw(renderer: WebGLRenderer, depth: DepthTexture, reversedDepth: boolean) {
+        if (renderer.getContext().isContextLost()) return;
         if (!this.isLoaded()) return;
 
         this.actor.rotation.z += 500 * Math.PI / 32768; // AL2Alarm::Tick 0x86d414.
