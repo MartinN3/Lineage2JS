@@ -3,10 +3,10 @@
 // No login credentials, game-server connection, account/world write, or synthetic packet is used.
 // Run only in a coordinated exclusive GPU window:
 // GPU_REPRO_EXCLUSIVE=1 DEBUG=pw:browser node tools/gpu-repro/offline-replay.cjs file.l2r
-const { execFileSync } = require('node:child_process');
 const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
+const { findCompetingBrowser, listBrowserProcesses, userDataDir } = require('./browser-processes.cjs');
 const { chromium } = require(process.env.GPU_REPRO_PLAYWRIGHT_MODULE || 'playwright');
 
 const ROOT = path.resolve(__dirname, '../..');
@@ -32,20 +32,17 @@ const ownedBrowserPids = new Set();
 let startedAt = Date.now(), lastFrame = null, lastTeleportCount = 0;
 
 function emit(step, data = {}) { console.log(JSON.stringify({ utc: new Date().toISOString(), step, ...data })); }
-function chromeProcesses() {
- return execFileSync('ps', ['-axo', 'pid=,command='], { encoding: 'utf8' }).split('\n')
-  .map(line => { const m = line.trim().match(/^(\d+)\s+(.+)$/); return m && { pid: Number(m[1]), command: m[2] }; })
-  .filter(p => p && /Google Chrome(?:\.app| Helper)|\/Chromium(?:\.app| Helper)|(?:^|\/)(?:google-chrome|chrome|chromium)(?:\s|$)/i.test(p.command));
-}
-function userDataDir(command) { return command.match(/--user-data-dir=(?:"([^"]+)"|([^\s]+))/)?.slice(1).find(Boolean) || ''; }
+function chromeProcesses() { return listBrowserProcesses(); }
 function assertExclusive() {
  const processes = chromeProcesses();
- if (USER_PROFILE && processes.some(p => p.command.includes(USER_PROFILE))) throw new Error('Refusing offline replay: dedicated user debug Chrome is active.');
- const competing = processes.find(p => {
-  const profile = userDataDir(p.command);
-  return profile && profile !== PROFILE;
- });
- if (competing) throw new Error(`Refusing offline replay: another browser profile is active (${userDataDir(competing.command)}).`);
+ if (USER_PROFILE && processes.some(p => userDataDir(p.command) === USER_PROFILE)) throw new Error('Refusing offline replay: dedicated user debug Chrome is active.');
+ const competing = findCompetingBrowser(processes, PROFILE);
+ if (competing) {
+  const profile = userDataDir(competing.command);
+  throw new Error(profile
+   ? `Refusing offline replay: another browser profile is active (${profile}).`
+   : 'Refusing offline replay: another Chrome/Chromium browser is active and its profile could not be read.');
+ }
  if (processes.some(p => userDataDir(p.command) === PROFILE)) throw new Error('Refusing offline replay: replay profile is already in use.');
 }
 async function recordOwnedBrowser() {
