@@ -2,8 +2,6 @@ import BufferValue from '@l2js/core/buffer-value';
 import { FPrimitiveArray, FPrimitiveArrayLazy } from '@l2js/core/unreal/un-array';
 import { FPrimitiveArray as PublicPrimitiveArray } from '@l2js/core';
 
-declare const APPLY_ARRAY_COMPAT: boolean;
-if (APPLY_ARRAY_COMPAT) require('../src/assets/core-array-compat');
 function assert(value: unknown, message: string): asserts value { if (!value) throw new Error(message); }
 function load(type: any, view: DataView, lazy = false) {
     let cursor = view.byteOffset;
@@ -17,7 +15,7 @@ function load(type: any, view: DataView, lazy = false) {
     return array;
 }
 export function runPrimitiveArrayChecks() {
-    assert(PublicPrimitiveArray === FPrimitiveArray, 'Public and direct core imports must share the patched class');
+    assert(PublicPrimitiveArray === FPrimitiveArray, 'Public and direct core imports must share the same class');
     for (const type of [BufferValue.uint8, BufferValue.int8, BufferValue.uint16, BufferValue.int16, BufferValue.uint32, BufferValue.int32, BufferValue.float, BufferValue.uint64, BufferValue.int64]) {
         const TypedArray = type.dtype;
         const values: any[] = type.name.includes('64') ? [1n, 7n] : type.name === 'float' ? [1.25, 2.5] : [1, 7];
