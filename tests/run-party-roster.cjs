@@ -14,10 +14,13 @@ const webpack = require('webpack');
                 output: { path: directory, filename: 'test.cjs' },
                 plugins: [new webpack.DefinePlugin({ BITMAP_NAMEPLATES: 'false' })],
                 resolve: { extensions: ['.ts', '.js'] },
-                module: { rules: [{ test: /\.ts$/, exclude: /node_modules/, use: {
-                    loader: require.resolve('babel-loader'),
-                    options: { presets: [require.resolve('@babel/preset-typescript')] }
-                } }] }
+                module: { rules: [
+                    { test: /zip-module\.wasm$/, type: 'asset/inline' },
+                    { test: /\.ts$/, exclude: /node_modules/, use: {
+                        loader: require.resolve('babel-loader'),
+                        options: { presets: [require.resolve('@babel/preset-typescript')] }
+                    } }
+                ] }
             });
             compiler.run((error, stats) => compiler.close(() => {
                 if (error || stats.hasErrors()) reject(error || new Error(stats.toString({ all: false, errors: true })));
