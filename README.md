@@ -2,6 +2,12 @@
 
 _At least it might be someday, hopefully._
 
+## Preservation and fair play
+
+This fork supports preservation, free experimentation, and community development. We oppose pay-to-win mechanics, paid random rewards, and monetization that sells competitive advantages or pressures players into spending.
+
+Read our [project philosophy](PHILOSOPHY.md). These principles express our values and do not add license restrictions. See [licensing status](LICENSING.md) for the inherited ISC declaration and the upstream notices that still need verification.
+
 ## Why?
 Modern Lineage II is a _mostly_ dead game full of bots and bad decisions made by NCSOFT. Even their attempts to provide a supposedly classical experience is filled with microtransactions, gameplay elements that prevent any type of punishment or even ban you from using chat until you reach a certain levels, these might have changed since the last time I played but it made me sad enough to just quit.
 
