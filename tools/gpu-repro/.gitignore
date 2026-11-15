@@ -1,0 +1,6 @@
+# Local captures and diagnostic artifacts can contain private gameplay data.
+*.jsonl
+*.l2r
+*.gputrace
+*.bin
+bone-atlas-audit-*/
