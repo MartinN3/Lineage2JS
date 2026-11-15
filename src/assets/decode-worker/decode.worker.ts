@@ -1,3 +1,4 @@
+import "../core-array-compat";
 import DecodeEngine from "./decode-engine";
 import type { MainToWorkerMessage_T, WorkerToMainMessage_T } from "./decode-protocol";
 import { selectAssetFiles, setServedAssets } from "../asset-source";
