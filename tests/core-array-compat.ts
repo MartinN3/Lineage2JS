@@ -36,8 +36,22 @@ export function runPrimitiveArrayChecks() {
             new Uint8Array(source)[offset] ^= 1;
             assert(aligned ? result[0] !== original : result[0] === original, `${type.name}: wrong copy/share behavior`);
         }
-        const empty = load(type, new DataView(new ArrayBuffer(5), 1, 0)).getTypedArray();
-        assert(empty.length === 0, `${type.name}: empty unaligned array must remain empty`);
+        for (const lazy of [false, true]) {
+            const emptyDataViewArray = load(type, new DataView(new ArrayBuffer(5), 1, 0), lazy);
+            (emptyDataViewArray as any).array = new DataView(new ArrayBuffer(5), 1, 0);
+            const emptyDataView = emptyDataViewArray.getTypedArray() as any;
+            const aligned = 1 % TypedArray.BYTES_PER_ELEMENT === 0;
+            assert(emptyDataView.length === 0, `${type.name}: empty DataView must remain empty`);
+            assert(emptyDataView.byteOffset === (aligned ? 1 : 0), `${type.name}: empty DataView alignment must be preserved`);
+
+            const emptyNullArray = load(type, new DataView(new ArrayBuffer(5), 1, 0), lazy);
+            // Optimize core loads empty arrays as null; normalize stable core to
+            // the same state so this regression is covered against either branch.
+            if ((emptyNullArray as any).array !== null) (emptyNullArray as any).array = null;
+            assert((emptyNullArray as any).array === null, `${type.name}: optimize core empty array state must be null`);
+            const emptyNull = emptyNullArray.getTypedArray();
+            assert(emptyNull.length === 0, `${type.name}: empty null array must remain empty`);
+        }
     }
     const failure = new Error('Unrelated constructor failure');
     class BrokenArray extends Uint16Array { constructor(...args: any[]) { super(...args as [any]); throw failure; } }
@@ -47,6 +61,13 @@ export function runPrimitiveArrayChecks() {
         catch (error) { caught = error; }
         assert(caught === failure, 'Unrelated constructor failures must propagate unchanged');
     }
+    const inconsistentNullArray = new FPrimitiveArray(BufferValue.uint16);
+    (inconsistentNullArray as any).array = null;
+    (inconsistentNullArray as any).getElemCount = () => 1;
+    let inconsistentNullError: unknown;
+    try { inconsistentNullArray.getTypedArray(); }
+    catch (error) { inconsistentNullError = error; }
+    assert(inconsistentNullError instanceof RangeError, 'Null storage with a nonzero element count must not be silently returned as empty');
     return 'Primitive array alignment checks passed';
 }
 try { (globalThis as any).primitiveArrayResult = { passed: true, message: runPrimitiveArrayChecks() }; }

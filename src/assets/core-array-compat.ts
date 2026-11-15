@@ -7,7 +7,9 @@ import { FPrimitiveArray } from "@l2js/core/unreal/un-array";
 class AlignedPrimitiveArray<T extends AllPrimitiveNumberTypes_T> extends FPrimitiveArray<T> {
     public getTypedArray(): ReturnType<FPrimitiveArray<T>["getTypedArray"]> {
         const TypedArray = this.Constructor.dtype;
-        const view = this.array;
+        // The optimize core branch represents empty primitive arrays as null.
+        // Treat that as its zero-length view before checking alignment.
+        const view = this.array || new DataView(new ArrayBuffer(0));
 
         if (view.byteOffset % TypedArray.BYTES_PER_ELEMENT === 0)
             return new TypedArray(view.buffer, view.byteOffset, this.getElemCount()) as ReturnType<FPrimitiveArray<T>["getTypedArray"]>;
