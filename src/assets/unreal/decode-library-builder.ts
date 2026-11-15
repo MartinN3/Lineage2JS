@@ -90,6 +90,21 @@ export class DecodeLibraryBuilder {
 
     public isLoadingExtendedBoneInfluences() { return this.settings.loadExtendedBoneInfluences !== false; }
 
+    public pullScriptObject(object: UObject): string {
+        if (!object) return null;
+        const info = dumpObjectClass(object), key = info.path.toLowerCase();
+
+        if ((object as any).isMaterial && !this.library.scriptObjects[key]?.properties) {
+            const cached = this.packageCache?.readScriptObject(object);
+
+            if (cached) this.library.scriptObjects[key] = cached;
+            else this.pullMaterial(object as UMaterial);
+        }
+        if (!(key in this.library.scriptObjects)) this.library.scriptObjects[key] = info;
+
+        return info.path;
+    }
+
     public pullMaterial(material: UMaterial): string {
         if (!material) return null;
 
@@ -103,10 +118,21 @@ export class DecodeLibraryBuilder {
         if (material.uuid in this.library.materials) return material.uuid;
         this.packageCache?.begin(material, "material", this.library);
         material = material.loadSelf();
+        const scriptObject = material.exp.isFake ? null : dumpObjectClass(material), key = scriptObject?.path.toLowerCase();
+
+        if (scriptObject) this.library.scriptObjects[key] = { ...scriptObject, properties: dumpObjectScriptProperties(material, this.cacheScriptDefaults) };
 
         this.materialsLoading.add(material.uuid);
 
         const info = material.getDecodeInfo(this);
+        if (scriptObject) {
+            const properties = this.library.scriptObjects[key].properties;
+
+            delete properties.Name;
+            delete properties.Outer;
+            delete properties.Class;
+            delete properties.ObjectFlags;
+        }
         if (this.packageCache && typeof (material as any).getTextureFrameDecodeInfo === "function" && !this.textureFrames.has(material.uuid))
             (material as UTexture).getTextureFrameDecodeInfo(this);
         const textureSize = typeof material.getTextureSize === "function" ? material.getTextureSize(this) : null;
@@ -116,13 +142,13 @@ export class DecodeLibraryBuilder {
         this.materialsLoading.delete(material.uuid);
 
         if (typeof info === "string" || !info) {
-            this.packageCache?.end(material, this.library, { uuid: info || null, textureSize, source });
+            this.packageCache?.end(material, this.library, { uuid: info || null, textureSize, source, scriptObject: scriptObject ? this.library.scriptObjects[key] : null });
             return (info as string) || null;
         }
 
         this.library.materials[material.uuid] = info;
         this.applyAlphaPalette(material.uuid, source);
-        this.packageCache?.end(material, this.library, { uuid: material.uuid, textureSize, source });
+        this.packageCache?.end(material, this.library, { uuid: material.uuid, textureSize, source, scriptObject: scriptObject ? this.library.scriptObjects[key] : null });
 
         return material.uuid;
     }
@@ -173,7 +199,10 @@ export class DecodeLibraryBuilder {
             if (!this.alphaPalettes.has(source.palettes[texture.name]) || texture.textureType !== "rgba") return texture;
             const data = new Uint8Array(texture.buffer);
             let differs = false;
-            for (let i = 0; i < data.length; i += 4) if (data[i] !== data[i + 3]) { differs = true; break; }
+            for (let i = 0; i < data.length; i += 4) if (data[i] !== data[i + 3]) {
+                differs = true;
+                break;
+            }
             if (!differs) return texture;
             const copy = data.slice();
             for (let i = 0; i < copy.length; i += 4) copy[i + 3] = copy[i];
@@ -224,7 +253,11 @@ export class DecodeLibraryBuilder {
             if (material) material.color = true;
         }
 
-        const metadata = { renderBounds: mesh.getRenderBoundingBox().getDecodeInfo(), collisionBounds: (mesh as any).collisionModel ? (mesh as any).collisionModel.loadSelf().getCollisionBoundingBox().getDecodeInfo() : null, useVertexColor: mesh.useVertexColor };
+        const metadata = {
+            renderBounds: mesh.getRenderBoundingBox().getDecodeInfo(),
+            collisionBounds: (mesh as any).collisionModel ? (mesh as any).collisionModel.loadSelf().getCollisionBoundingBox().getDecodeInfo() : null,
+            useVertexColor: mesh.useVertexColor
+        };
         this.staticMeshMetadata.set(mesh.uuid, metadata);
         this.packageCache?.end(mesh, this.library, { object: result.object, metadata, colorMaterials: result.colorMaterials });
         return this.packageCache ? this.getStaticMeshVariant(result.object, modifiers) : result.object;
@@ -404,7 +437,10 @@ export class DecodeLibraryBuilder {
 
         for (const actor of level.getActors()) {
             this.library.levelActorUuids.push(actor ? actor.uuid : null);
-            if (!actor) { this.library.levelActors.push(null); continue; }
+            if (!actor) {
+                this.library.levelActors.push(null);
+                continue;
+            }
 
             actor.loadSelf();
             const info: Pick<IBaseObjectDecodeInfo, "uuid" | "name" | "scriptClassId" | "scriptProperties" | "sharedScriptProperties" | "ownerUuid"> = { uuid: actor.uuid, name: actor.objectName };
@@ -421,7 +457,7 @@ export class DecodeLibraryBuilder {
         this.setScriptClass(levelInfo, this.library.levelInfo);
         const physicsVolume = levelInfo.physicsVolume ? levelInfo.physicsVolume.loadSelf() : null;
         if (physicsVolume) {
-            this.library.levelInfo.physicsVolume = physicsVolume.getDecodeInfo(this.library);
+            this.library.levelInfo.physicsVolume = physicsVolume.getDecodeInfo(this);
             this.setScriptClass(physicsVolume, this.library.levelInfo.physicsVolume);
         }
         // Engine.dll MultiPointCheck 0x85f530..0x85f533: BSP hits return LevelInfo.
@@ -472,7 +508,7 @@ export class DecodeLibraryBuilder {
             if ((actor as any).isPhysicsVolume) {
                 const volume = actor.loadSelf() as UPhysicsVolume;
                 this.pullVolumeCollisionActor(volume);
-                const volumeInfo = volume.getDecodeInfo(this.library);
+                const volumeInfo = volume.getDecodeInfo(this);
 
                 this.setScriptClass(volume, volumeInfo);
                 this.library.physicsVolumes.push(volumeInfo);
@@ -548,7 +584,13 @@ export class DecodeLibraryBuilder {
 
                     if (!staticMeshActor.isDeleteMe && staticMeshActor.isCollidingActors && staticMeshActor.mesh) {
                         const mesh = staticMeshActor.mesh as UStaticMesh;
-                        this.library.staticMeshCollisionActors.push({ uuid: actor.uuid, name: actor.objectName, position: staticMeshActor.location.getElements(), collisionBounds: this.getStaticMeshBounds(mesh, staticMeshActor, true).getDecodeInfo(), collision: staticMeshActor.getCollisionDecodeInfo() });
+                        this.library.staticMeshCollisionActors.push({
+                            uuid: actor.uuid,
+                            name: actor.objectName,
+                            position: staticMeshActor.location.getElements(),
+                            collisionBounds: this.getStaticMeshBounds(mesh, staticMeshActor, true).getDecodeInfo(),
+                            collision: staticMeshActor.getCollisionDecodeInfo()
+                        });
                     }
 
                     if (this.settings.loadStaticModels === false) break;
@@ -573,7 +615,7 @@ export class DecodeLibraryBuilder {
                     this.pullVolumeCollisionActor(volume);
 
                     if (!volume.isDeleteMe) {
-                        const volumeInfo = volume.getDecodeInfo();
+                        const volumeInfo = volume.getDecodeInfo(this);
 
                         this.setScriptClass(volume, volumeInfo);
                         this.library.blockingVolumes.push(volumeInfo);
@@ -584,7 +626,7 @@ export class DecodeLibraryBuilder {
                     const music = actor.loadSelf() as UMusicVolume;
                     this.pullVolumeCollisionActor(music);
 
-                    const musicInfo = music.getDecodeInfo(this.library);
+                    const musicInfo = music.getDecodeInfo(this);
 
                     this.setScriptClass(music, musicInfo);
                     if (this.settings.loadAudio !== false) this.library.audioList.push(musicInfo);

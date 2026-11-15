@@ -1,6 +1,9 @@
 import { Box3, Matrix3, Matrix4, Vector3 } from "three";
 import type { CollisionModel_T, CollisionPrimitive_T, CollisionTriangleIndex_T } from "../objects/objects";
 
+const CYLINDER_TANGENT_TOLERANCE = Math.fround(-0.1);
+const CYLINDER_HIT_TIME_BIAS = Math.fround(0.001);
+
 const tmpA = new Vector3();
 const tmpB = new Vector3();
 const tmpC = new Vector3();
@@ -26,7 +29,7 @@ const tmpPlanePoint = new Vector3();
 const tmpPlaneNormal = new Vector3();
 const tmpTriangleHit: PrimitiveHit_T = { time: 1, normal: new Vector3(), item: -1 };
 // const tmpHullHit: PrimitiveHit_T = { time: 1, normal: new Vector3(), item: -1 };
-const tmpBestHit: PrimitiveHit_T = { time: 1, normal: new Vector3(), item: -1 };
+const tmpBestHit: PrimitiveHit_T = { time: 1, normal: new Vector3(), item: -1, skinIndex: -1 };
 const tmpPointHit: PrimitiveHit_T = { time: 0, normal: new Vector3(), item: -1 };
 const clipState: ClipState_T = { t0: -1, t1: 1, normal: new Vector3(), item: -1, hit: false };
 const arrPointTriangles: number[] = [];
@@ -65,7 +68,7 @@ let terrainBestItem = -1;
 let gridClipT0 = 0;
 let gridClipT1 = 1;
 
-export type PrimitiveHit_T = { time: number, normal: Vector3, item: number };
+export type PrimitiveHit_T = { time: number, normal: Vector3, item: number, skinIndex?: number };
 type ClipState_T = { t0: number, t1: number, normal: Vector3, item: number, hit: boolean };
 type GridCellVisitor_T = (x: number, y: number) => number; // returns the best hit time so far
 type HullPlane_T = [number, number, number, number, number];
@@ -752,7 +755,7 @@ function queryCylinder(primitive: Extract<CollisionPrimitive_T, { kind: "cylinde
     let discriminant = Math.fround(b * b - 4 * a * c);
 
     if (c < 1 && startZ > bottom && startZ < top) {
-        if (Math.fround(dx) * x + Math.fround(dy) * y >= Math.fround(-0.1)) return null;
+        if (Math.fround(dx) * x + Math.fround(dy) * y >= CYLINDER_TANGENT_TOLERANCE) return null;
 
         const nx = Math.fround(x), ny = Math.fround(y);
         const lengthSq = nx * nx + ny * ny;
@@ -765,6 +768,7 @@ function queryCylinder(primitive: Extract<CollisionPrimitive_T, { kind: "cylinde
         }
         tmpBestHit.time = 0;
         tmpBestHit.item = 0;
+        tmpBestHit.skinIndex = 0;
 
         return tmpBestHit;
     }
@@ -794,7 +798,7 @@ function queryCylinder(primitive: Extract<CollisionPrimitive_T, { kind: "cylinde
         if (t0 >= t1) return null;
     }
 
-    const time = Math.max(0, Math.min(1, Math.fround(t0 - Math.fround(0.001))));
+    const time = Math.max(0, Math.min(1, Math.fround(t0 - CYLINDER_HIT_TIME_BIAS)));
 
     if (time > maxTime) return null;
 
@@ -1085,6 +1089,7 @@ function queryBsp(model: CollisionModel_T, matrix: Matrix4, start: Vector3, end:
     if (!bspHit) return null;
 
     tmpBestHit.time = bspBestTime;
+    tmpBestHit.item = -1;
 
     return tmpBestHit;
 }
@@ -1303,6 +1308,7 @@ function clipBspHull(planes: HullPlane_T[], boxPlanes: HullPlane_T[], start: Vec
 }
 
 export function queryPrimitive(primitive: CollisionPrimitive_T, start: Vector3, end: Vector3, extent: Vector3, maxTime: number = 1): PrimitiveHit_T | null {
+    tmpBestHit.skinIndex = -1;
     if (primitive.kind === "cylinder") return queryCylinder(primitive, start, end, extent, maxTime);
     if (primitive.kind === "staticMesh" && primitive.collisionModel && (extent.lengthSq() === 0 ? primitive.useSimpleLineCollision : primitive.useSimpleBoxCollision))
         return queryBsp(primitive.collisionModel, primitive.matrixWorld, start, end, extent);

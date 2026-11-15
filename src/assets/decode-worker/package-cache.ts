@@ -157,8 +157,14 @@ export class PackageCache {
         if (!key) return undefined;
         const parent = this.stack[this.stack.length - 1];
         if (parent) parent.dependencies.add(key);
-        if (!this.entries.has(key)) { this.misses++; return undefined; }
-        if (!this.used.get(library)?.has(key) && !this.available(key, new Set())) { this.misses++; return undefined; }
+        if (!this.entries.has(key)) {
+            this.misses++;
+            return undefined;
+        }
+        if (!this.used.get(library)?.has(key) && !this.available(key, new Set())) {
+            this.misses++;
+            return undefined;
+        }
 
         this.restore(key, library);
         this.hits++;
@@ -184,6 +190,15 @@ export class PackageCache {
         const seekable = this.seekable.get(owner);
         if (seekable && pixels) hydrateLibraryFileSync(seekable, stored);
         return { ...source, data: stored.data, paletteRed: stored.paletteRed };
+    }
+
+    public readScriptObject(object: any): DecodeLibrary["scriptObjects"][string] | null {
+        const key = this.key(object, "material"), entry = key ? this.entries.get(key) : null;
+        if (!entry) return null;
+        const info = entry.result.scriptObject, seekable = this.seekable.get(this.owners.get(key));
+        if (!info?.properties) throw new Error(`Missing material script properties for '${key}'.`);
+        if (seekable) hydrateLibraryFileSync(seekable, info);
+        return info;
     }
 
     protected available(key: string, seen: Set<string>): boolean {
@@ -216,10 +231,16 @@ export class PackageCache {
         const recording = this.stack[this.stack.length - 1];
         if (!recording) return;
         const owner = this.claimed.get(library)?.get(`materials:${uuid}`);
-        if (owner) { recording.dependencies.add(owner); return; }
+        if (owner) {
+            recording.dependencies.add(owner);
+            return;
+        }
         for (let i = this.stack.length - 1; i >= 0; i--) {
             const parent = this.stack[i];
-            if (parent.uuid === uuid && parent.key?.endsWith(":material")) { recording.dependencies.add(parent.key); return; }
+            if (parent.uuid === uuid && parent.key?.endsWith(":material")) {
+                recording.dependencies.add(parent.key);
+                return;
+            }
         }
     }
 
@@ -404,7 +425,8 @@ export async function restorePackageAssets(library: any, settings: LoadSettings_
                 base = entry.assets[name][uuid];
             }
             let value = { ...base, ...reference.overrides };
-            if (base.materialType === "sprite" && reference.overrides.sprites) value.sprites = base.sprites.map((texture: ITextureDecodeInfo, index: number) => ({ ...texture, ...reference.overrides.sprites[index] }));
+            if (base.materialType === "sprite" && reference.overrides.sprites)
+                value.sprites = base.sprites.map((texture: ITextureDecodeInfo, index: number) => ({ ...texture, ...reference.overrides.sprites[index] }));
             if (reference.rgba?.length) {
                 if (value.materialType === "sprite") value.sprites = value.sprites.map((texture: ITextureDecodeInfo) => ({ ...texture }));
                 const textures = value.materialType === "sprite" ? value.sprites : [value];

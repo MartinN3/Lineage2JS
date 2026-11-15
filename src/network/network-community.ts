@@ -79,13 +79,19 @@ export class NetworkCommunity {
 
         render.radar.setMeshes(await this.network.getParent().getComponent("asset").loadSkeletalMeshes("LineageDecos", Radar.getMeshNames()));
         render.radar.getState = () => this.getRadarState();
-        if (!render.overHeadAlarm.isLoaded()) render.overHeadAlarm.setMesh((await this.network.getParent().getComponent("asset").loadSkeletalMeshes("LineageDecos", ["e_mark_m00"], ["LineageDecosTex.e_t00"]))[0]);
+        if (!render.overHeadAlarm.isLoaded())
+            render.overHeadAlarm.setMesh((await this.network.getParent().getComponent("asset").loadSkeletalMeshes("LineageDecos", ["e_mark_m00"], ["LineageDecosTex.e_t00"]))[0]);
         const asset = this.network.getParent().getComponent("asset"), library = await asset.loadQuestEffects();
 
         render.questArrow.createEffect = path => asset.createScriptObject(render, library, path);
         render.questArrow.canDraw = () => this.network.actors.inWorld && !this.network.movement.isObserving();
         render.questArrow.getDestination = () => this.network.ui.isQuestArrowEnabled() ? this.questArrowDestination : null;
-        render.questArrow.onArrival = () => { this.questArrowDestination = null; this.radarMarkers.length = 0; this.mapMarkers.length = 0; this.network.ui.setMapMarkers(this.mapMarkers); };
+        render.questArrow.onArrival = () => {
+            this.questArrowDestination = null;
+            this.radarMarkers.length = 0;
+            this.mapMarkers.length = 0;
+            this.network.ui.setMapMarkers(this.mapMarkers);
+        };
     }
 
     protected getRadarState(): RadarState_T { // DrawRadarBack 0x7FE54A: party members by GetUser actor, else the PartyMemberPosition XY; target is Controller.SelectedActor.
@@ -345,7 +351,11 @@ export class NetworkCommunity {
         if (packet.getRemaining()) throw new Error("Invalid PledgeInfo trailing data.");
         const info = this.pledgeInfos.get(clanId);
 
-        if (clanId > 0 && info) { info.name = name; info.allyName = allyName; this.updateGMCharacterInfo(); }
+        if (clanId > 0 && info) {
+            info.name = name;
+            info.allyName = allyName;
+            this.updateGMCharacterInfo();
+        }
     }
 
     public updatePledgeInfo(clanId: number, crestId: number, allyId: number, allyCrestId: number, unknown: number) {
@@ -385,7 +395,8 @@ export class NetworkCommunity {
 
         const allyId = packet.d(), allyName = packet.S(), allyCrestId = packet.d(), isAtWar = packet.d();
 
-        if (clanId <= 0 || crestId < 0 || level < 0 || hasCastle < 0 || hasHideout < 0 || memberLevel < 0 || dissolving < 0 || allyId < 0 || allyCrestId < 0 || (isAtWar !== 0 && isAtWar !== 1) || packet.getRemaining())
+        if (clanId <= 0 || crestId < 0 || level < 0 || hasCastle < 0 || hasHideout < 0 || memberLevel < 0 || dissolving < 0 || allyId < 0 || allyCrestId < 0 || (isAtWar !== 0 && isAtWar !== 1) ||
+            packet.getRemaining())
             throw new Error("Invalid PledgeShowInfoUpdate payload.");
 
         const current = this.clanInfo;
@@ -616,9 +627,22 @@ export class NetworkCommunity {
             switch (packet.d()) {
                 case GamePackets.SystemMessageParam_T.TYPE_TEXT: params.push(packet.S()); break;
                 case GamePackets.SystemMessageParam_T.TYPE_NUMBER: params.push(String(packet.d())); break;
-                case GamePackets.SystemMessageParam_T.TYPE_NPC_NAME: { const id = packet.d() - GamePackets.NPC_ID_OFFSET; params.push(this.network.actors.npcNames.get(id) || `npc#${id}`); break; }
-                case GamePackets.SystemMessageParam_T.TYPE_ITEM_NAME: { const id = packet.d(); params.push(strings.itemNames[id] || `item#${id}`); break; }
-                case GamePackets.SystemMessageParam_T.TYPE_SKILL_NAME: { const id = packet.d(); packet.d(); params.push(strings.skillNames[id] || `skill#${id}`); break; }
+                case GamePackets.SystemMessageParam_T.TYPE_NPC_NAME: {
+                    const id = packet.d() - GamePackets.NPC_ID_OFFSET;
+                    params.push(this.network.actors.npcNames.get(id) || `npc#${id}`);
+                    break;
+                }
+                case GamePackets.SystemMessageParam_T.TYPE_ITEM_NAME: {
+                    const id = packet.d();
+                    params.push(strings.itemNames[id] || `item#${id}`);
+                    break;
+                }
+                case GamePackets.SystemMessageParam_T.TYPE_SKILL_NAME: {
+                    const id = packet.d();
+                    packet.d();
+                    params.push(strings.skillNames[id] || `skill#${id}`);
+                    break;
+                }
                 default: throw new Error(`Unknown SystemMessage parameter type in message ${messageId}.`);
             }
         }
@@ -744,7 +768,10 @@ export class NetworkCommunity {
 
     public requestPledgeMemberList() { if (this.network.actors.inWorld) this.network.session.game.requestPledgeMemberList(); }
 
-    public getSelectedPlayer() { const target = this.network.actors.objects.get(this.network.getTargetId()); return target && (target.kind === "user" || target.kind === "player") ? target : null; }
+    public getSelectedPlayer() {
+        const target = this.network.actors.objects.get(this.network.getTargetId());
+        return target && (target.kind === "user" || target.kind === "player") ? target : null;
+    }
 
     public invitePledge(objectId: number) { if (this.network.actors.inWorld) this.network.session.game.requestJoinPledge(objectId); }
 
@@ -942,6 +969,13 @@ export class NetworkCommunity {
 
     public tutorialClientEvent(eventId: number) { if (this.network.actors.inWorld) this.network.session.game.requestTutorialClientEvent(eventId); }
 
+    public checkTutorialClientEvent(eventId: number) {
+        if (!(this.tutorialClientEvents & eventId)) return;
+
+        this.tutorialClientEvent(eventId);
+        this.tutorialClientEvents ^= eventId;
+    }
+
     public tutorialQuestionMark(id: number) {
         if (!this.network.actors.inWorld) return;
 
@@ -1023,7 +1057,8 @@ export class NetworkCommunity {
             case GamePackets.PartyRoomMemberChange_T.REMOVE: this.partyRoomMembers.delete(member.objectId); break;
             default: throw new Error(`Invalid ExManagePartyRoomMember mode ${mode}.`);
         }
-        if (member.objectId === this.network.actors.userId) this.partyRoomMode = mode === GamePackets.PartyRoomMemberChange_T.REMOVE || mode === GamePackets.PartyRoomMemberChange_T.MODIFY && !this.partyRoomMembers.has(member.objectId) ? 0 : member.role;
+        if (member.objectId === this.network.actors.userId)
+            this.partyRoomMode = mode === GamePackets.PartyRoomMemberChange_T.REMOVE || mode === GamePackets.PartyRoomMemberChange_T.MODIFY && !this.partyRoomMembers.has(member.objectId) ? 0 : member.role;
         this.network.ui.setPartyRoomMembers(this.partyRoomMode, Array.from(this.partyRoomMembers.values()), false);
     }
 

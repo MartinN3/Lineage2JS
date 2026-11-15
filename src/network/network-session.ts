@@ -1,5 +1,4 @@
 import { characterCreationRaces } from "../build-settings";
-import { EInputKey_T, EInputAction_T } from "@l2js/engine/un-interactions";
 import type NetworkManager from "./network-manager";
 import { Vector3 } from "three";
 import BaseActor from "../base-actor";
@@ -7,6 +6,7 @@ import LoginClient, { type SessionKey_T } from "./login-client";
 import GameClient, { type CharacterCreate_T } from "./game-client";
 import L2Lobby from "./l2-lobby";
 import L2ReplayFile from "./l2-replay-file";
+import { isReplayCameraInput } from "./l2-replay-input";
 import { saveReplayFile } from "./replay-files";
 import * as GamePackets from "./game-packets";
 import PacketReader from "./packet-reader";
@@ -306,24 +306,18 @@ export class NetworkSession {
         const properties = this.network.getParent().getComponent("asset").playerController.scriptProperties;
 
         file.setScene(scene);
-        // shortcut: follow-camera presets; extend after free-camera initialization is traced.
-        if (scene.cameraMode) throw new Error(`Replay camera mode is not implemented.`);
         const presetCount = properties.get("FixedDefaultViewNum") as number;
 
         if (scene.fixedCamera < 0 || scene.fixedCamera >= Math.max(1, presetCount)) throw new Error(`Invalid replay camera preset '${scene.fixedCamera}'.`);
         if (!first || first.opcode !== GamePackets.GameServerPacket_T.UserInfo) throw new Error(`Replay requires an initial UserInfo snapshot.`);
         if (lockCamera) {
-            for (const { key, action, amount } of file.arrCameraInstructions) {
-                if ((key === EInputKey_T.IK_MouseX || key === EInputKey_T.IK_MouseY) && action === EInputAction_T.IST_Axis) {
-                    if (Math.abs(Math.trunc(amount * 3600 * Math.fround(0.01))) > 0x7fffffff) throw new Error(`Replay camera axis exceeds the implemented input range.`);
-                    continue;
-                }
-                if ((key === EInputKey_T.IK_RightMouse || key === EInputKey_T.IK_MouseWheelUp || key === EInputKey_T.IK_MouseWheelDown) && (action === EInputAction_T.IST_Press || action === EInputAction_T.IST_Release)) continue;
-                if ((key === EInputKey_T.IK_PageUp || key === EInputKey_T.IK_PageDown || key === EInputKey_T.IK_Home) && (action === EInputAction_T.IST_Press || action === EInputAction_T.IST_Hold || action === EInputAction_T.IST_Release)) continue;
-                throw new Error(`Replay camera key/action '${key}/${action}' is not implemented.`);
+            for (const { key, action } of file.arrCameraInstructions) {
+                if (!isReplayCameraInput(key, action, true)) throw new Error(`Replay camera key/action '${key}/${action}' is not implemented.`);
             }
         }
-        const info = GamePackets.readUserInfo(new PacketReader(first.payload)), render = this.network.getParent().getComponent("render"), input = this.network.getParent().getComponent("input");
+        const info = GamePackets.readUserInfo(new PacketReader(first.payload)),
+            render = this.network.getParent().getComponent("render"),
+            input = this.network.getParent().getComponent("input");
         const game = new GameClient();
 
         game.onPacket = (opcode, packet) => { if (this.game === game) this.network.onPacket(opcode, packet); };
@@ -358,6 +352,7 @@ export class NetworkSession {
             render.player.setUnrealScriptProperty("DesiredRotation", [0, yaw, 0]);
             render.player.setRotationYaw(yaw);
             input.startReplayCamera(scene);
+            this.network.movement.cameraMode = scene.cameraMode;
             game.tickReplayPlayback(0);
             this.replayLoading = false;
         } catch (error) {
@@ -398,7 +393,22 @@ export class NetworkSession {
         const zoom = properties.get("CurZoomingDist") as number;
         const fixedCamera = properties.get("CurFixedDefaultCameraNo") as number;
 
-        file.setScene({ position: render.camera.position.toArray(), yaw: Math.trunc(Math.atan2(direction.y, direction.x) * 32768 / Math.PI), pitch: Math.trunc(Math.atan2(direction.z, Math.hypot(direction.x, direction.y)) * 32768 / Math.PI), zoom, desiredZoom: properties.get("DesiredZoomingDist") as number, hour: Math.floor(time / 3600), minute: Math.floor(time / 60) % 60, second: time % 60, duration: 0, cameraMode: properties.get("bCameraWalking") ? 1 : 0, firstPerson: fixedCamera === 1 ? 1 : 0, observerMode: this.network.movement.observation ? 1 : 0, actorYaw: render.player.getRotationYaw(), fixedCamera });
+        file.setScene({
+            position: render.camera.position.toArray(),
+            yaw: Math.trunc(Math.atan2(direction.y, direction.x) * 32768 / Math.PI),
+            pitch: Math.trunc(Math.atan2(direction.z, Math.hypot(direction.x, direction.y)) * 32768 / Math.PI),
+            zoom,
+            desiredZoom: properties.get("DesiredZoomingDist") as number,
+            hour: Math.floor(time / 3600),
+            minute: Math.floor(time / 60) % 60,
+            second: time % 60,
+            duration: 0,
+            cameraMode: properties.get("bCameraWalking") ? 1 : 0,
+            firstPerson: fixedCamera === 1 ? 1 : 0,
+            observerMode: this.network.movement.observation ? 1 : 0,
+            actorYaw: render.player.getRotationYaw(),
+            fixedCamera
+        });
         file.arrUserIds = [...this.network.actors.objects.keys()];
         this.game.startRecording(file);
         this.network.ui.setReplayRecording(true);

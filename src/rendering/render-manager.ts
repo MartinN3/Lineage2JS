@@ -8,6 +8,7 @@ import BatchAngleVisibility from "./batch-angle-visibility";
 import SectorOcclusion from "./sector-occlusion";
 import ProgramVariants from "./program-variants";
 import { ENetMode_T } from "../assets/unreal/un-level-info";
+import { EDrawType_T } from "../assets/unreal/un-aactor";
 import "./ue2-conventions";
 import { setTerrainTextureUnits } from "../materials/mesh-terrain-material/mesh-terrain-material";
 import "../materials/shader-chunks/register-chunks";
@@ -71,6 +72,10 @@ import WideScreenBars from "./wide-screen-bars";
 import QuestArrow from "./quest-arrow";
 import ViewportWindow from "./viewport-window";
 import type PawnFishingComponent from "../objects/components/pawn-fishing-component";
+
+const MIN_SCREEN_FADE_ALPHA = Math.fround(0.0001);
+const MIN_ACTOR_DELTA = Math.fround(0.0005);
+const MAX_ACTOR_DELTA = Math.fround(0.4);
 
 export type HTMLViewportElement_T = HTMLDivElement;
 
@@ -165,6 +170,16 @@ type SectorWarmup_T = {
 };
 
 const frozenUpdateMatrixWorld = function () { };
+
+function resetDynamicActorFilter(pawn: BaseActor): boolean {
+    const script = pawn.findComponent<ScriptComponent>("script");
+
+    if (!script || !script.getVM().isA(pawn, "Pawn")) return false;
+    // RenderLevel 0x1064ee01; ProcessLeaf 0x1064b0e0 / 0x1064b44d.
+    if (getProperty(pawn, "DrawType") === EDrawType_T.DT_Mesh && !getProperty(pawn, "bIgnoredRange"))
+        setProperty(pawn, "bDynamicActorFilterState", false);
+    return true;
+}
 
 function updateEmitterRenderState(scene: Object3D, emitters: ReadonlySet<any>): void {
     for (const emitter of emitters)
@@ -330,6 +345,7 @@ export class RenderManager implements IEngineComponent<GameManager> {
     protected readonly particleBatcher = new InstancedSpriteBatcher();
     protected readonly pawnCrowd: PawnCrowd;
     protected readonly visibleWorldBatchEmitters: any[] = [];
+    protected lastObjectUpdateTime = -1;
     protected readonly arrViewportBatchEmitters: any[] = [];
     protected readonly nameplateDepth: NameplateDepth;
     protected readonly neighborVisibilitySectors: SectorObject[] = [];
@@ -489,9 +505,13 @@ export class RenderManager implements IEngineComponent<GameManager> {
             if ((object as PawnMesh).isPawnMesh) {
                 if (scene === this.scene && this.pawnCrowd.accept(object as PawnMesh, material.transparent)) return;
                 boneAtlas.upload(this.renderer);
-            } else if (scene === this.scene && (object as LitSkinnedMesh).isLitSkinnedMesh && (object as LitSkinnedMesh).actorRenderable && this.pawnCrowd.acceptPart(object as LitSkinnedMesh, material as MeshStaticMaterial, group)) return;
+            } else if (scene === this.scene &&
+                (object as LitSkinnedMesh).isLitSkinnedMesh &&
+                (object as LitSkinnedMesh).actorRenderable &&
+                this.pawnCrowd.acceptPart(object as LitSkinnedMesh, material as MeshStaticMaterial, group)) return;
 
-            if (!(object as PawnMesh).isPawnMesh && (object as LitSkinnedMesh).skeleton && ((object as LitSkinnedMesh).skeleton as LocalSpaceSkeleton).isAtlasPacked) ((object as LitSkinnedMesh).skeleton as LocalSpaceSkeleton).resolveMatrices();
+            if (!(object as PawnMesh).isPawnMesh && (object as LitSkinnedMesh).skeleton && ((object as LitSkinnedMesh).skeleton as LocalSpaceSkeleton).isAtlasPacked)
+                ((object as LitSkinnedMesh).skeleton as LocalSpaceSkeleton).resolveMatrices();
 
             if (scene === this.scene || scene === this.nameplateScene) this.nameplateDepth.beforeRender(material, object); // a fading pawn in the shadow pass made it copy the 256x256 shadow depth
             renderBufferDirect.call(this.renderer, camera, scene, geometry, material, object, group);
@@ -536,11 +556,17 @@ export class RenderManager implements IEngineComponent<GameManager> {
                 core.material = material.getAlphaCore();
                 item.material = material.getAlphaFringe();
                 let index = coreCount++;
-                while (index && this.arrAlphaCores[index - 1].material.id > core.material.id) { this.arrAlphaCores[index] = this.arrAlphaCores[index - 1]; index--; }
+                while (index && this.arrAlphaCores[index - 1].material.id > core.material.id) {
+                    this.arrAlphaCores[index] = this.arrAlphaCores[index - 1];
+                    index--;
+                }
                 this.arrAlphaCores[index] = core;
             }
             for (let i = 0; i < coreCount; i++) worldList.opaque.push(this.arrAlphaCores[i]);
-            for (let i = coreCount; i < this.alphaCoreCount; i++) { const core = this.arrAlphaCores[i]; core.object = core.geometry = core.material = core.group = null; }
+            for (let i = coreCount; i < this.alphaCoreCount; i++) {
+                const core = this.arrAlphaCores[i];
+                core.object = core.geometry = core.material = core.group = null;
+            }
             this.alphaCoreCount = coreCount;
             for (const item of worldList.transparent) {
                 const actor = (item.object as LitSkinnedMesh).actorRenderable;
@@ -1126,7 +1152,7 @@ export class RenderManager implements IEngineComponent<GameManager> {
 
             this.screenFadeElapsed = Math.fround(elapsed);
             this.screenFadeLastTime = currentTime;
-            time = this.screenFadeOutDuration > 0 ? Math.max(Math.fround(0.0001), Math.min(1, Math.fround(elapsed / this.screenFadeOutDuration))) * this.screenFadeOutDuration : 0;
+            time = this.screenFadeOutDuration > 0 ? Math.max(MIN_SCREEN_FADE_ALPHA, Math.min(1, Math.fround(elapsed / this.screenFadeOutDuration))) * this.screenFadeOutDuration : 0;
         }
 
         if (time < this.screenFadeOutDuration) {
@@ -1218,13 +1244,19 @@ export class RenderManager implements IEngineComponent<GameManager> {
         return this.getSectorByCoords(sectorX, sectorY);
     }
 
+    public getCurrentSWLevel(location: THREE.Vector3): SectorObject {
+        const sector = this.getSector(location);
+
+        return sector && sector.hasFinishedLoading ? sector : this.level;
+    }
+
     public areProgramsReady(): boolean { return this.programVariants.isReady(); }
     public isSectorWarm(sector: SectorObject): boolean { return !this.pendingSectorWarmups.some(job => job.sector === sector); }
 
     public isSectorCollisionReady(position: THREE.Vector3): boolean {
         const sector = this.getSector(position);
 
-        return !!sector && !!sector.staticMeshGroup;
+        return !!sector && sector.hasFinishedLoading;
     }
 
     public getSectorByCoords(sectorX: number, sectorY: number): SectorObject | null {
@@ -1609,7 +1641,7 @@ export class RenderManager implements IEngineComponent<GameManager> {
 
     protected updatePawnPresentation(currentTime: number, deltaTime: number): void {
         const timeDilation = this.level ? this.level.levelInfoActor.getUnrealScriptProperty("TimeDilation") as number : 1;
-        const actorDelta = Math.fround(Math.max(Math.fround(0.0005), Math.min(Math.fround(0.4), Math.fround(Math.fround(deltaTime / 1000) * timeDilation))));
+        const actorDelta = Math.fround(Math.max(MIN_ACTOR_DELTA, Math.min(MAX_ACTOR_DELTA, Math.fround(Math.fround(deltaTime / 1000) * timeDilation))));
 
         for (const component of this.pawnRenderables) {
             const pawn = component.getParent();
@@ -1642,7 +1674,6 @@ export class RenderManager implements IEngineComponent<GameManager> {
         const controller = this.manGame.getComponent("asset").playerController;
         const viewTarget = getProperty(controller, "ViewTarget");
 
-        // The viewport controller's runtime transform is the player pawn's transform.
         const reference = !viewTarget || viewTarget === controller ? this.player : viewTarget as unknown as THREE.Object3D;
         reference.getWorldPosition(tmpPawnViewOrigin);
         const originX = Math.fround(tmpPawnViewOrigin.x), originY = Math.fround(tmpPawnViewOrigin.y);
@@ -1651,6 +1682,7 @@ export class RenderManager implements IEngineComponent<GameManager> {
         this.arrVisiblePawns.length = 0;
         for (const component of this.pawnRenderables) {
             const pawn = component.getParent();
+            const filterPawn = resetDynamicActorFilter(pawn);
             const state = this.resolvePawnLocation(pawn);
             const dx = Math.fround(state.position.x) - originX, dy = Math.fround(state.position.y) - originY;
             const inRange = inWorld ? component.updateActorView(Math.sqrt(dx * dx + dy * dy), range) : component.prepareActorView();
@@ -1667,10 +1699,15 @@ export class RenderManager implements IEngineComponent<GameManager> {
                     const leaves = component.getAmbientZone(state.sector).leaves;
 
                     for (let i = 0; i < leaves.length; i++)
-                        if (state.sector.visibleLeaves.has(leaves[i])) { leafVisible = true; break; }
+                        if (state.sector.visibleLeaves.has(leaves[i])) {
+                            leafVisible = true;
+                            break;
+                        }
                 } else leafVisible = state.leafIndex !== null && state.sector.visibleLeaves.has(state.leafIndex);
 
-                pawn.visible = leafVisible && (!this.frustumCullingEnabled || frustum.intersectsSphere(component.getRenderSphere())) && !pawn.checkLoadingResource(false);
+                pawn.visible = leafVisible && (!this.frustumCullingEnabled || frustum.intersectsSphere(component.getRenderSphere()));
+                if (pawn.visible && filterPawn) setProperty(pawn, "bDynamicActorFilterState", true);
+                pawn.visible = pawn.visible && !pawn.checkLoadingResource(false);
             }
             if (pawn.visible) {
                 if (limit < 10000 && pawn !== this.player) this.arrVisiblePawns.push(component);
@@ -1751,7 +1788,10 @@ export class RenderManager implements IEngineComponent<GameManager> {
 
     public setAlphaCore(alpha: number) {
         ALPHA_CORE_REF.value = alpha;
-        this.arrSceneSectors.forEach(sector => { sector.setSortTransparent(!this.sortTransparent); sector.setSortTransparent(this.sortTransparent); }); // repacks canonical indices
+        this.arrSceneSectors.forEach(sector => {
+            sector.setSortTransparent(!this.sortTransparent);
+            sector.setSortTransparent(this.sortTransparent);
+        }); // repacks canonical indices
         this.needsUpdate = true;
     }
 
@@ -1762,8 +1802,9 @@ export class RenderManager implements IEngineComponent<GameManager> {
 
     protected updatePawnShadow(): void {
         const timeOfDay = this.environment.getTimeOfDay();
+        const focus = this.manGame.getComponent("network").isInWorld() || this.player.visible ? this.player : this.camera; // AShadowProjector::execCheckVisible 0x93dd0f..0x93dd31: the controller's Pawn, else the controller
 
-        this.player.getWorldPosition(tmpPawnWorldPos);
+        focus.getWorldPosition(tmpPawnWorldPos);
 
         const sector = this.getSector(tmpPawnWorldPos);
         let sun: DynamicLight = null;
@@ -1792,7 +1833,7 @@ export class RenderManager implements IEngineComponent<GameManager> {
                 if (component.getParent() !== this.player && (gui.getScreen() !== "world" || gui.hasNameplate(component.getParent()))) arrShadowCasters.push(component.getParent());
         }
 
-        this.shadowProjector.update(this.renderer, this.player, arrShadowCasters, tmpShadowDirection);
+        this.shadowProjector.update(this.renderer, focus, arrShadowCasters, tmpShadowDirection);
     }
 
     public invalidatePawnLighting(actor: THREE.Object3D): void {
@@ -1903,7 +1944,15 @@ export class RenderManager implements IEngineComponent<GameManager> {
             state.lightingSpecialLit = isSpecialLit;
         }
 
-        if (!moved && !boundsChanged && !rootChanged && !locationChanged && !ambientChanged && !relevantLightsChanged && !relevantLightUpdated && state.pawnLightVersion === pawnLightVersion && state.skillLightVersion === skillLightVersion) return;
+        if (!moved &&
+            !boundsChanged &&
+            !rootChanged &&
+            !locationChanged &&
+            !ambientChanged &&
+            !relevantLightsChanged &&
+            !relevantLightUpdated &&
+            state.pawnLightVersion === pawnLightVersion &&
+            state.skillLightVersion === skillLightVersion) return;
 
         if (pawnLights) pawnLights.updateLighting(lightingSphere);
 
@@ -1944,7 +1993,10 @@ export class RenderManager implements IEngineComponent<GameManager> {
 
         const fogFar = (this.scene.fog as Fog)?.far || DEFAULT_FAR;
         const tanHalfFov = Math.tan(camera.fov * Math.PI / 360);
-        const fogSphere = tmpViewSphere.set(bspCullingPosition, fogFar * Math.sqrt(1 + tanHalfFov * tanHalfFov * (1 + camera.aspect * camera.aspect))); // fog is planar view depth, frustum corners reach further
+        const fogSphere = tmpViewSphere.set(
+            bspCullingPosition,
+            fogFar * Math.sqrt(1 + tanHalfFov * tanHalfFov * (1 + camera.aspect * camera.aspect))
+        ); // fog is planar view depth, frustum corners reach further
 
         frustum.setFromProjectionMatrix(tmpViewMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse), WebGLCoordinateSystem, camera.reversedDepth);
 
@@ -1955,7 +2007,7 @@ export class RenderManager implements IEngineComponent<GameManager> {
             frustum.planes[4].setFromNormalAndCoplanarPoint(tmpCamDir.negate(), tmpFarPoint);
         }
 
-        // TODO: Clip static meshes against [ClippingRange] StaticMesh instead of fog.
+        // TODO: Clip static meshes against [ClippingRange] StaticMesh instead of fog. Or maybe not, I kinda like the extended view
         const STATIC_MESH_CLIPPING_RANGE = 1;
         const staticMeshCullDist = fogFar * STATIC_MESH_CLIPPING_RANGE;
         const staticMeshCullDistSq = staticMeshCullDist * staticMeshCullDist;
@@ -1970,32 +2022,47 @@ export class RenderManager implements IEngineComponent<GameManager> {
             this.getPhysicsManager().setTriggerPosition(this.usePawnCullingCamera ? this.player.position : this.camera.position);
         }
 
-        const fadeStep = auxiliary ? 0 : this.isCameraCut ? Infinity : (this.manGame.getCurrentTime() - this.sectorFadeTime) / SECTOR_FADE_MS;
-        if (!auxiliary) this.sectorFadeTime = this.manGame.getCurrentTime();
+        const fadeStep = auxiliary
+            ? 0
+            : this.isCameraCut
+                ? Infinity
+                : (this.manGame.getCurrentTime() - this.sectorFadeTime) / SECTOR_FADE_MS;
+
+        if (!auxiliary)
+            this.sectorFadeTime = this.manGame.getCurrentTime();
 
         for (const sector of this.arrSceneSectors) {
             const isCameraInSector = activeSector === sector;
             const wasVisible = sector.visible;
             const isInRange = !sector.isRetired && (isCameraInSector || fogSphere.intersectsBox(sector.worldBounds));
 
-            if (!auxiliary && sector.updateFade(isInRange ? fadeStep : -fadeStep)) {
+            if (!auxiliary && sector.updateFade(!isInRange ? -fadeStep : isCameraInSector ? Infinity : fadeStep)) {
                 for (const job of this.pendingSectorWarmups)
                     if (job.sector === sector) job.fallbackMaterials.forEach(material => { if (!material.transparent) material.opacity = job.root === sector ? sector.fade : sector.meshFade; });
                 this.needsUpdate = true;
             }
 
-            if ((auxiliary ? !isInRange : sector.fade === 0) || !isCameraInSector && !hasExteriorView) { sector.visible = false; continue; }
+            if ((auxiliary ? !isInRange : sector.fade === 0) || !isCameraInSector && !hasExteriorView) {
+                sector.visible = false;
+                continue;
+            }
 
             sector.visible = true;
 
             const topLevelOnly = !isCameraInSector;
 
             if (auxiliary || isCameraInSector || !wasVisible || !(sector as any).visibilityCacheInitialized) {
-                sector.updateVisibility(this.environment, bspCullingPosition, frustum, this.frustumCullingEnabled, topLevelOnly, staticMeshCullDistSq, emitterCullDistSq, auxiliary);
-            } else {
-                this.neighborVisibilitySectors.push(sector);
-            }
-
+                sector.updateVisibility(
+                    this.environment,
+                    bspCullingPosition,
+                    frustum,
+                    this.frustumCullingEnabled,
+                    topLevelOnly,
+                    staticMeshCullDistSq,
+                    emitterCullDistSq,
+                    auxiliary
+                );
+            } else this.neighborVisibilitySectors.push(sector);
         }
 
         if (!auxiliary && this.neighborVisibilitySectors.length > 0) {
@@ -2015,7 +2082,10 @@ export class RenderManager implements IEngineComponent<GameManager> {
         for (const emitter of this.getPhysicsManager().getParticleEmitters()) {
             let sector: SectorObject = null;
             for (let parent = emitter.parent; parent; parent = parent.parent)
-                if (parent.isSectorObject) { sector = parent; break; }
+                if (parent.isSectorObject) {
+                    sector = parent;
+                    break;
+                }
 
             if (!emitter.isActorAttachedEmitter && sector && (!sector.visible || !sector.visibleEmitterUuids.has(emitter.emitterActorUuid))) {
                 emitter.setRenderVisible(false);
@@ -2088,10 +2158,23 @@ export class RenderManager implements IEngineComponent<GameManager> {
 
             let sector: SectorObject = null;
             for (let parent = emitter.parent; parent; parent = parent.parent)
-                if (parent.isSectorObject) { sector = parent; break; }
+                if (parent.isSectorObject) {
+                    sector = parent;
+                    break;
+                }
 
             for (const sound of emitter.pendingSounds)
-                if (sound.dataUri || sector) this.audioManager.playOneShotSound(sound.dataUri || sector.getSoundUri(sound.soundName), sound.position, sound.volume, sound.pitch, sound.refDistance, sound.maxDistance, true, undefined, this.audioManager.hasCombatSounds(emitter));
+                if (sound.dataUri || sector) this.audioManager.playOneShotSound(
+                    sound.dataUri || sector.getSoundUri(sound.soundName),
+                    sound.position,
+                    sound.volume,
+                    sound.pitch,
+                    sound.refDistance,
+                    sound.maxDistance,
+                    true,
+                    undefined,
+                    this.audioManager.hasCombatSounds(emitter)
+                );
             emitter.pendingSounds.length = 0;
         }
 
@@ -2114,7 +2197,7 @@ export class RenderManager implements IEngineComponent<GameManager> {
                 } else if ((child as any).isVehicleMesh) {
                     const vehicleSector = this.getSector(child.getWorldPosition(tmpPawnWorldPos));
                     if (vehicleSector) (child as any).update(vehicleSector, this.environment, this.renderer);
-                } else if (sector && sector !== activeSector && !(child as any).needsInitialLighting?.()) return;
+                } else if (sector && sector !== activeSector && !(child as any).needsInitialLighting?.() && !(child as any).needsSeenLighting?.(currentTime, this.lastObjectUpdateTime)) return;
                 else if (sector && 'computeLighting' in child) (child as any).update(sector, this.environment, this.renderer);
                 else (child as any).update(currentTime);
             }
@@ -2138,6 +2221,7 @@ export class RenderManager implements IEngineComponent<GameManager> {
             }
         });
 
+        this.lastObjectUpdateTime = currentTime;
         this.particleBatcher.update(this.visibleWorldBatchEmitters, this.camera);
 
         this.updateEnvironment();
@@ -2501,7 +2585,7 @@ export class RenderManager implements IEngineComponent<GameManager> {
                 this.pawnShadowLimited = true;
                 this.keepMinFrameRate = true;
                 this.pawnShadowRecoveryTime = 0;
-            } else if (this.pawnShadowLimited && this.pawnShadowFrameTime < 1000 / 90) {
+            } else if (this.pawnShadowLimited && this.pawnShadowFrameTime < 1000 / 45) {
                 this.pawnShadowRecoveryTime += frameTime;
                 if (this.pawnShadowRecoveryTime >= 5000) {
                     this.pawnShadowLimited = false;
@@ -2542,7 +2626,8 @@ export class RenderManager implements IEngineComponent<GameManager> {
             root.traverse(object => { // compile() rebuilds the cache key of every material it is handed, 25 ms for a warmed sector
                 const material = (object as THREE.Mesh).material;
 
-                if (material && (Array.isArray(material) ? material : [material]).some(value => !(this.renderer.properties.get(value) as { currentProgram: unknown }).currentProgram)) tmpShaderCompileGroup.children.push(object);
+                if (material && (Array.isArray(material) ? material : [material]).some(value => !(this.renderer.properties.get(value) as { currentProgram: unknown }).currentProgram))
+                    tmpShaderCompileGroup.children.push(object);
             });
             this.particleBatcher.prepare(root, tmpShaderCompileGroup);
         }
@@ -2756,7 +2841,10 @@ export class RenderManager implements IEngineComponent<GameManager> {
                 const canvas = this.viewportSceneCanvas, ratio = renderer.getPixelRatio(), scale = Math.max(1, Math.floor(ratio));
                 const width = 252 * scale, height = 254 * scale;
 
-                if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
+                if (canvas.width !== width || canvas.height !== height) {
+                    canvas.width = width;
+                    canvas.height = height;
+                }
                 renderer.setRenderTarget(null);
                 renderer.setViewport(0, 0, width / ratio, height / ratio);
                 this.displayGammaPass.render(renderer, viewport.target.texture, this.displayGammaEnabled);
@@ -3139,6 +3227,7 @@ export class RenderManager implements IEngineComponent<GameManager> {
                 this.visualizer.updateLeaves(currentSectorMap, cameraPos, cameraFrustum, this.frustumCullingEnabled);
             }
         }
+        if (sector.staticMeshGroup) sector.hasFinishedLoading = true;
     }
 
     protected processSectorWarmups() {
@@ -3335,9 +3424,11 @@ export class RenderManager implements IEngineComponent<GameManager> {
 
         setLightingGate(sector.staticMeshGroup, false);
         this.queueSectorWarmup(sector, sector.staticMeshGroup, true);
+        sector.hasFinishedLoading = true;
     }
 
     public removeSector(sector: SectorObject) {
+        sector.hasFinishedLoading = false;
         sector.traverse(object => {
             if ("cancelPendingLighting" in object) (object as any).cancelPendingLighting();
         });
@@ -3433,7 +3524,7 @@ export class RenderManager implements IEngineComponent<GameManager> {
 
             this.bspHelperCameraHelper = new CameraHelper(this.bspHelperCamera);
             this.bspHelperCameraHelper.name = "BSPHelperCameraHelper";
-            this.bspHelperCameraHelper.raycast = () => {};
+            this.bspHelperCameraHelper.raycast = () => { };
             this.bspHelperCameraHelper.visible = false;
             this.scene.add(this.bspHelperCameraHelper);
 
@@ -3590,7 +3681,10 @@ function releaseSectorResources(sector: SectorObject) {
 // procedural maps nest several levels deep (uniforms.shDiffuse.value.map.texture), needs a real walk
 function collectTexturesDeep(value: any, textures: Set<THREE.Texture>, seen: WeakSet<object>): void {
     if (!value || typeof value !== "object" || ArrayBuffer.isView(value) || value instanceof ArrayBuffer) return;
-    if (value.isTexture) { textures.add(value); return; }
+    if (value.isTexture) {
+        textures.add(value);
+        return;
+    }
     if (seen.has(value)) return;
 
     seen.add(value);

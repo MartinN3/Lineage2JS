@@ -272,7 +272,10 @@ export class NDomLayer {
     public cancelDrag() { if (this.stopDrag) this.stopDrag(); }
 
     public dragWindow(element: HTMLElement, event: MouseEvent, place: (x: number, y: number) => void = (x, y) => this.place(element, x, y)) {
-        const x = this.toUI(event.clientX) - element.offsetLeft, y = this.toUI(event.clientY) - element.offsetTop, startX = element.offsetLeft, startY = element.offsetTop;
+        const x = this.toUI(event.clientX) - element.offsetLeft;
+        const y = this.toUI(event.clientY) - element.offsetTop;
+        const startX = element.offsetLeft;
+        const startY = element.offsetTop;
 
         this.beginDrag(moveEvent => {
             const [nextX, nextY] = this.manager.snapWindow(this.toUI(moveEvent.clientX) - x, this.toUI(moveEvent.clientY) - y, element.offsetWidth, element.offsetHeight, element);
@@ -301,13 +304,15 @@ export class NDomLayer {
         for (const [element, position] of this.windowPositions) this.place(element, position[0], position[1]);
     }
 
-    public async loadTextures(paths: string[], tinted: [string, number][] = [], useIntrinsicAlpha = true) { // tinted copies share atlas pages of the same call
+    public async loadTextures(paths: string[], tinted: [string, number][] = [], useIntrinsicAlpha = true, atlasWidth = ATLAS_WIDTH) { // tinted copies share atlas pages of the same call
         const canvas = this.manager.canvas;
 
         await Promise.all([canvas.loadTextures([...paths, ...tinted.map(([path]) => path)], useIntrinsicAlpha), prepareCanvasImageUrls()]);
 
         const requests = [...new Map<string, [string, number]>([...paths.map(path => [path, 0xffffff] as [string, number]), ...tinted].map(([path, tint]) => {
-            const key = path.replace(/^\?/, "").toLowerCase(), imageKey = canvas.getTextureKey(key, useIntrinsicAlpha), atlasKey = tint === 0xffffff ? imageKey : `${imageKey}:${tint & 0xffffff}`;
+            const key = path.replace(/^\?/, "").toLowerCase();
+            const imageKey = canvas.getTextureKey(key, useIntrinsicAlpha);
+            const atlasKey = tint === 0xffffff ? imageKey : `${imageKey}:${tint & 0xffffff}`;
 
             return [atlasKey, [key, tint]];
         })).entries()].filter(([atlasKey, [key]]) => !this.atlas.has(atlasKey) && canvas.hasTexture(key, useIntrinsicAlpha));
@@ -322,13 +327,13 @@ export class NDomLayer {
         let x = 0, y = 0, shelf = 0;
 
         for (const i of images.map((_, i) => i).sort((a, b) => images[b].height - images[a].height)) {
-            if (x > 0 && x + images[i].width > ATLAS_WIDTH) {
+            if (x > 0 && x + images[i].width > atlasWidth) {
                 x = 0;
                 y += shelf + 1;
                 shelf = 0;
             }
 
-            if (y > 0 && y + images[i].height > ATLAS_WIDTH) {
+            if (y > 0 && y + images[i].height > atlasWidth) {
                 arrPages.push([]);
                 x = y = shelf = 0;
             }
@@ -629,7 +634,19 @@ export class NDomLayer {
             onSelect();
             this.manager.playWindowSound();
         };
-        const tab = this.button(parent, x, y, w, h, normal, label ? normal : selected, label ? normal === selected || !this.hasTexture(`${normal}_over`) ? normal : `${normal}_over` : selected, label, null, isDown => { if (isDown) select(); });
+        const tab = this.button(
+            parent,
+            x,
+            y,
+            w,
+            h,
+            normal,
+            label ? normal : selected,
+            label ? normal === selected || !this.hasTexture(`${normal}_over`) ? normal : `${normal}_over` : selected,
+            label,
+            null,
+            isDown => { if (isDown) select(); }
+        );
         const setTextures = tab.setTextures, setEnabled = tab.setEnabled;
 
         tab.setTextures = (normal, down) => {
@@ -1026,7 +1043,15 @@ export class NDomLayer {
             else input.maxLength = maxLength;
         };
         element.getValue = () => isNumeric ? input.value.replace(/,/g, "") : input.value;
-        element.setValue = value => { input.value = value; if (isNumeric) { isNumericInputEnabled = true; input.setSelectionRange(value.length, value.length); formatNumber(); } draw(); };
+        element.setValue = value => {
+            input.value = value;
+            if (isNumeric) {
+            isNumericInputEnabled = true;
+            input.setSelectionRange(value.length, value.length);
+            formatNumber();
+        }
+            draw();
+        };
         element.appendValue = value => {
             if (isNumeric && !isNumericInputEnabled) return;
 
