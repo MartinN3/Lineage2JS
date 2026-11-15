@@ -112,13 +112,27 @@ export class LocalSpaceSkeleton extends Skeleton {
     }
 
     public retainAtlas(): void {
-        if (this.atlasReferences++ > 0) return;
+        if (this.atlasReferences > 0) {
+            this.atlasReferences++;
+            return;
+        }
         if (this.parents === null) this.claimBones();
 
-        this.atlasOffset = boneAtlas.allocate(this.bones.length);
-        this.isAtlasPacked = true;
-        boneAtlas.setBind(this.atlasOffset, this.boneInverses, this.parents);
-        this.writeAtlasPose();
+        const offset = boneAtlas.allocate(this.bones.length);
+
+        try {
+            boneAtlas.setBind(offset, this.boneInverses, this.parents);
+            this.atlasOffset = offset;
+            this.isAtlasPacked = true;
+            this.writeAtlasPose();
+            this.atlasReferences = 1;
+        } catch (error) {
+            this.isAtlasPacked = false;
+            this.atlasOffset = -1;
+            this.atlasReferences = 0;
+            boneAtlas.free(offset);
+            throw error;
+        }
     }
 
     public releaseAtlas(isDisposed: boolean = false): void {
@@ -554,12 +568,18 @@ export class LocalSpaceSkeleton extends Skeleton {
         const bones = this.bones;
         const indices = new Map<Object3D, number>();
 
-        this.parents = new Int32Array(bones.length);
-        this.locals = bones.map(() => new Matrix4());
-        this.attachments = [];
-        this.ownsBones = bones[0].parent === this.mesh;
+        const parents = new Int32Array(bones.length).fill(-1);
+        const locals = bones.map(() => new Matrix4());
+        const attachments: BoneAttachment_T[] = [];
+        const ownsBones = bones[0].parent === this.mesh;
 
-        if (!this.ownsBones) return; // a loose chain attached onto some other skeleton's bone, see attachLooseBoneChains
+        if (!ownsBones) {
+            this.parents = parents;
+            this.locals = locals;
+            this.attachments = attachments;
+            this.ownsBones = false;
+            return; // a loose chain attached onto some other skeleton's bone, see attachLooseBoneChains
+        }
 
         for (let i = 0, len = bones.length; i < len; i++) indices.set(bones[i], i);
 
@@ -570,16 +590,23 @@ export class LocalSpaceSkeleton extends Skeleton {
             if (index >= i) throw new Error(`Bone '${bones[i].name}' is posed before its parent '${parent.name}'.`);
             if (index < 0 && parent !== this.mesh) throw new Error(`Bone '${bones[i].name}' hangs off '${parent.name}', which is outside its own skeleton.`);
 
-            this.parents[i] = index;
+            parents[i] = index;
 
             for (const child of bones[i].children) {
                 if (indices.has(child)) continue;
 
-                this.attachments.push({ object: child, bone: i, usesBindMatrix: false });
-                bones[i].updateWorldMatrix = frozenUpdateMatrixWorld;
+                attachments.push({ object: child, bone: i, usesBindMatrix: false });
             }
         }
 
+        // Commit only after the entire parent graph passed validation so a
+        // failed claim can be retried without retaining a partial graph.
+        this.parents = parents;
+        this.locals = locals;
+        this.attachments = attachments;
+        this.ownsBones = true;
+
+        for (const attachment of attachments) bones[attachment.bone].updateWorldMatrix = frozenUpdateMatrixWorld;
         bones[0].updateMatrixWorld = frozenUpdateMatrixWorld;
         this.updateAttachmentVisibility();
     }

@@ -237,8 +237,17 @@ export class BoneAtlas {
     }
 
     public setBind(start: number, inverses: Matrix4[], parents: Int32Array): void {
-        for (let i = 0; i < inverses.length; i++)
-            writePoseMatrix(inverses[i], this.bind, (start + i) * 16, parents[i] < 0 ? -1 : start + parents[i]);
+        if (parents.length !== inverses.length) throw new Error("Bone atlas bind matrices and parent indices must have matching lengths.");
+
+        for (let i = 0; i < inverses.length; i++) {
+            const parent = parents[i];
+            if (parent >= i) throw new Error(`Bone ${i} has a parent that is not before it in the atlas range.`);
+        }
+
+        for (let i = 0; i < inverses.length; i++) {
+            const parent = parents[i];
+            writePoseMatrix(inverses[i], this.bind, (start + i) * 16, parent < 0 ? -1 : start + parent);
+        }
 
         this.bindTexture.needsUpdate = true;
     }
@@ -250,6 +259,10 @@ export class BoneAtlas {
 
         this.counts.delete(start);
         this.ranges.free(start, count);
+
+        for (let i = start; i < start + count; i++) this.bind[i * 16 + 12] = -1;
+        this.bindTexture.needsUpdate = true;
+        this.markDirty(start, count);
     }
 
     public markDirty(start: number, count: number): void {
