@@ -42,12 +42,15 @@ export class NameplateDepth {
             const actor = (object as LitSkinnedMesh).actorRenderable;
             if (actor && actor.isOpaque() && material.blending === NormalBlending) return;
 
-            this.capture();
-            this.copied = true;
+            this.copied = this.capture();
         }
     }
 
     protected capture() {
+        // WebGLRenderer skips drawing while the context is lost. Keep the frame
+        // loop alive until it is restored instead of inspecting invalid GL state.
+        if (this.gl.isContextLost()) return false;
+
         const gl = this.gl, source = gl.getParameter(gl.DRAW_FRAMEBUFFER_BINDING), read = gl.getParameter(gl.READ_FRAMEBUFFER_BINDING);
         const target = this.renderer.getRenderTarget(), width = target ? target.width : gl.drawingBufferWidth, height = target ? target.height : gl.drawingBufferHeight;
         if (!source) throw new Error(`Nameplate depth requires an offscreen framebuffer`);
@@ -99,13 +102,13 @@ export class NameplateDepth {
             gl.bindFramebuffer(gl.READ_FRAMEBUFFER, read);
             gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, source);
         }
+        return true;
     }
 
     public finishWorld() {
         if (!this.active || this.copied) return;
 
-        this.capture();
-        this.copied = true;
+        this.copied = this.capture();
     }
 
     public getTexture() { return this.copied ? this.texture : null; }
