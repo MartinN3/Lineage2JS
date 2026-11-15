@@ -85,14 +85,14 @@ async function main() {
                 probeCanvas.getContext('2d').putImageData(new ImageData(probeExpected, 2, 2), 0, 0);
                 let directBmp = { error: null, width: 0, height: 0, pixels: null };
                 const directUrl = URL.createObjectURL(window.__encodeBitmap(probeCanvas));
+                let eventProbe = { error: null, width: 0, height: 0, pixels: null, matches: false };
                 try {
                     const directImage = new Image();
+                    const directCanvas = document.createElement('canvas');
+                    directCanvas.width = directCanvas.height = 2;
+                    const directContext = directCanvas.getContext('2d');
                     directImage.src = directUrl;
                     await directImage.decode();
-                    const directCanvas = document.createElement('canvas');
-                    directCanvas.width = directImage.naturalWidth;
-                    directCanvas.height = directImage.naturalHeight;
-                    const directContext = directCanvas.getContext('2d');
                     directContext.drawImage(directImage, 0, 0);
                     directBmp = {
                         error: null,
@@ -101,8 +101,33 @@ async function main() {
                         pixels: Array.from(directContext.getImageData(0, 0, 2, 2).data),
                     };
                 } catch (error) { directBmp.error = String(error); }
+                const eventCanvas = document.createElement('canvas');
+                eventCanvas.width = eventCanvas.height = 2;
+                const eventContext = eventCanvas.getContext('2d', { willReadFrequently: true });
+                eventContext.putImageData(new ImageData(probeExpected, 2, 2), 0, 0);
+                const eventUrl = URL.createObjectURL(window.__encodeBitmap(eventCanvas));
+                try {
+                    const eventImage = new Image();
+                    eventProbe = await new Promise(resolve => {
+                        const finish = value => { eventImage.onload = eventImage.onerror = null; resolve(value); };
+                        eventImage.onload = () => {
+                            try {
+                                if (eventImage.naturalWidth !== 2 || eventImage.naturalHeight !== 2) return finish({ error: 'size', width: eventImage.naturalWidth, height: eventImage.naturalHeight, pixels: null, matches: false });
+                                eventContext.clearRect(0, 0, 2, 2);
+                                eventContext.drawImage(eventImage, 0, 0);
+                                const actual = Array.from(eventContext.getImageData(0, 0, 2, 2).data);
+                                const matches = actual.every((value, index) => Math.abs(value - probeExpected[index]) <= 1);
+                                finish({ error: null, width: eventImage.naturalWidth, height: eventImage.naturalHeight, pixels: actual, matches });
+                            } catch (error) { finish({ error: String(error), width: eventImage.naturalWidth, height: eventImage.naturalHeight, pixels: null, matches: false }); }
+                        };
+                        eventImage.onerror = () => finish({ error: 'onerror', width: eventImage.naturalWidth, height: eventImage.naturalHeight, pixels: null, matches: false });
+                        window.setTimeout(() => finish({ error: 'timeout', width: eventImage.naturalWidth, height: eventImage.naturalHeight, pixels: null, matches: false }), 1000);
+                        eventImage.src = eventUrl;
+                    });
+                } catch (error) { eventProbe.error = String(error); }
                 URL.revokeObjectURL(directUrl);
-                return { firstFormat, firstCallMs: firstMs, probeMs, afterFormat, probeExpected: Array.from(probeExpected), directBmp };
+                URL.revokeObjectURL(eventUrl);
+                return { firstFormat, firstCallMs: firstMs, probeMs, afterFormat, probeExpected: Array.from(probeExpected), directBmp, eventProbe };
             }));
             await page.close();
         }
