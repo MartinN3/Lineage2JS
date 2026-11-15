@@ -14,6 +14,9 @@ This is the hard part. Re-creating a game client even if I had the original sour
 
 I'm not a vanilla purist so if there's some data that's not critical but is hiding there in the binary, I will just skip it if it's possible to do without it.
 
+## Core dependency
+This client targets the `optimize` branch of [`l2js-core`](https://github.com/realratchet/l2js-core). `package-lock.json` pins the exact core commit used by `npm ci`; update the lockfile when intentionally moving to a newer `optimize` revision.
+
 ## When?
 Hopefully someday it's actually complete, obviously this is a passion project and it's not sustainable to invest any reasonable amount of time to it, so there can be months before even a small amount of progress is made, depending on my schedule. However, any help is always welcome, I will not however take bug reports or requests because obviously it's not something that's even remotely ready to be used.
 
