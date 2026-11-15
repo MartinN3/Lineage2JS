@@ -79,7 +79,30 @@ async function main() {
                 const afterUrl = window.__getCanvasImageUrl(canvas);
                 const afterFormat = afterUrl.startsWith('blob:') ? 'BMP' : 'PNG';
                 if (afterUrl.startsWith('blob:')) URL.revokeObjectURL(afterUrl);
-                return { firstFormat, firstCallMs: firstMs, probeMs, afterFormat };
+                const probeExpected = new Uint8ClampedArray([255, 0, 0, 255, 0, 255, 0, 128, 0, 0, 0, 0, 17, 34, 51, 255]);
+                const probeCanvas = document.createElement('canvas');
+                probeCanvas.width = probeCanvas.height = 2;
+                probeCanvas.getContext('2d').putImageData(new ImageData(probeExpected, 2, 2), 0, 0);
+                let directBmp = { error: null, width: 0, height: 0, pixels: null };
+                const directUrl = URL.createObjectURL(window.__encodeBitmap(probeCanvas));
+                try {
+                    const directImage = new Image();
+                    directImage.src = directUrl;
+                    await directImage.decode();
+                    const directCanvas = document.createElement('canvas');
+                    directCanvas.width = directImage.naturalWidth;
+                    directCanvas.height = directImage.naturalHeight;
+                    const directContext = directCanvas.getContext('2d');
+                    directContext.drawImage(directImage, 0, 0);
+                    directBmp = {
+                        error: null,
+                        width: directImage.naturalWidth,
+                        height: directImage.naturalHeight,
+                        pixels: Array.from(directContext.getImageData(0, 0, 2, 2).data),
+                    };
+                } catch (error) { directBmp.error = String(error); }
+                URL.revokeObjectURL(directUrl);
+                return { firstFormat, firstCallMs: firstMs, probeMs, afterFormat, probeExpected: Array.from(probeExpected), directBmp };
             }));
             await page.close();
         }
