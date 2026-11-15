@@ -4,6 +4,7 @@ import { FontType_T } from "./nwindow-canvas";
 import type { ShopItem_T } from "../network/game-packets";
 import { SKIN_SLOTS } from "./skin-textures";
 import SysString_T from "./sys-string";
+import { getShopIconPaths } from "./shop-icons";
 
 const TEX_BACK = "L2UI_CH3.StoreWnd.Store1_back";
 const TEX_SELECTED = "L2UI.NWindow.item_click";
@@ -45,6 +46,7 @@ export class NCShopWnd {
     protected isSell = false;
     protected drag: ShopDrag_T = null;
     protected generation = 0;
+    protected getIconPaths(items: ShopItem_T[][], icons: string[]) { return getShopIconPaths(items, icons); }
 
     public constructor(protected readonly layer: NDomLayer, protected readonly isPreview = false) {
         this.element = layer.createWindow(0, 0, 256, 401);
@@ -264,7 +266,7 @@ export class NCShopWnd {
     public async paintItems(scrollSide = -1) {
         const generation = ++this.generation, strings = this.layer.getManager().strings;
 
-        await this.layer.loadTextures([...new Set(this.items.flat().map(item => strings.itemIcons[item.itemId]))]);
+        await this.layer.loadTextures(this.getIconPaths(this.items, strings.itemIcons));
         if (generation !== this.generation) return;
 
         this.lists.forEach((list, side) => {
@@ -292,7 +294,8 @@ export class NCShopWnd {
 
                 frame.dataset.selected = "";
                 frame.hidden = item !== this.selected[side];
-                this.layer.tile(button, 1, 1, 32, 32, 0, 0, 32, 32, strings.itemIcons[item.itemId]);
+                const icon = strings.itemIcons[item.itemId];
+                if (icon) this.layer.tile(button, 1, 1, 32, 32, 0, 0, 32, 32, icon);
                 if (!this.isSell && !this.isPreview && !this.isStore && side === 0 && item.count > 0) this.layer.text(button, String(item.count), 0xffff0000, FontType_T.SMALL, 1, 1);
                 button.addEventListener("mouseenter", event => this.hoverItem(side, index, event.buttons));
                 button.addEventListener("mouseleave", () => {
