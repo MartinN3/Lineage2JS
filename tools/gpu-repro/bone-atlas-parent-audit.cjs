@@ -108,9 +108,10 @@ async function installBoneAtlasAudit(page) {
         }
         }
       } catch (error) {
+        unsafeGraph = true; // Fail closed when validation itself cannot complete.
         stats.errors++;
         if (!published) { published = true; console.info(sentinel + JSON.stringify({ utc: new Date().toISOString(),
-          auditError: String(error?.stack || error), diagnosticQuadSkipped: false })); }
+          auditError: String(error?.stack || error), diagnosticQuadSkipped: true })); }
       }
       if (unsafeGraph) return; // Never submit the verified invalid diagnostic quad.
       return original.call(this,camera,scene,geometry,material,object,group);

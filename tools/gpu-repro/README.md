@@ -72,3 +72,10 @@ The optional audit inspects CPU-side pose/bind texture bytes for parent cycles o
 ## Interpretation
 
 Keep synthetic controls, live UI repros, and recorded-packet playback distinct. A recorded replay tests the packets and client handlers represented in the recording; it does not run a live server session or guarantee every server callback. A clean replay is evidence only for that recording, renderer, viewport, settings, and observation window. A valid CPU parent graph does not prove GPU texture contents. Do not infer a root cause from a single correlation or claim a fix without a controlled repeat and evidence tied to the failing workload.
+
+## Offline crowd performance comparisons
+
+See [CROWD_BENCHMARK.md](CROWD_BENCHMARK.md) for isolated before/after replay
+builds, main-loop timing and loose-skeleton counts, plus an optional deterministic
+equipped crowd. The instrumentation and synthetic workload are fork tooling;
+they are not part of the minimal upstream Metal fix.

@@ -17,3 +17,6 @@ scripts/*
 !scripts/*.py
 traces/*
 /*-report.jsonl*
+
+# Local benchmark build stamps and artifacts
+/.gpu-repro-benchmark/

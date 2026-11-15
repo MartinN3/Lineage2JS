@@ -20,11 +20,17 @@ const CHROME = process.env.GPU_REPRO_CHROME || '';
 const DEV_PORT = GAME_URL.port || (GAME_URL.protocol === 'https:' ? '443' : '80');
 const KEEP_OPEN = process.env.GPU_REPRO_KEEP_OPEN === '1';
 const REPLAY_SPEED = Number(process.env.GPU_REPRO_SPEED || 1);
-const BONE_AUDIT = process.env.GPU_REPRO_BONE_AUDIT === '1';
+const BENCHMARK = process.env.GPU_REPRO_BENCHMARK === '1';
+const BONE_AUDIT = BENCHMARK || process.env.GPU_REPRO_BONE_AUDIT === '1';
+const benchmarkHost = require('./crowd-benchmark.cjs');
+const syntheticHost = require('./synthetic-phase.cjs');
+const syntheticConfig = syntheticHost.readConfig(process.env.GPU_REPRO_CROWD_CONFIG);
+if (syntheticConfig && !BENCHMARK) throw new Error('Synthetic crowd requires GPU_REPRO_BENCHMARK=1');
+const benchmarkBuild = BENCHMARK ? require('./benchmark-build.cjs').readBuild(process.env.GPU_REPRO_BENCHMARK_REPO) : null;
 const boneAuditHost=require('./bone-atlas-parent-audit.cjs');
 let boneAuditSink;
 const CDP_PORT = Number(process.env.GPU_REPRO_CDP_PORT || 9225);
-const HARD_LIMIT_MS = 180000;
+const HARD_LIMIT_MS = syntheticConfig ? 360000 : 180000;
 let context, page, launchAttempted = false, pageFailed = false, pageCrashed = false, closing = false, timer, forceTimer;
 const instanceToken = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const instanceArg = `--l2-offline-replay-instance=${instanceToken}`;
@@ -89,7 +95,7 @@ async function sample(stage) {
   const actors = [...n.actors.objects.values()];
   const target = r.manGame.getComponent('input').getOrbitTarget?.();
   const environment = r.getEnvironment();
-  return { stage, utc: new Date().toISOString(), pageTime: performance.now(), contextLost: gl.isContextLost(),
+  return { stage, bench: globalThis.__l2SiegeBench?.take() || null, utc: new Date().toISOString(), pageTime: performance.now(), contextLost: gl.isContextLost(),
    contextEvents: window.__offlineReplayEvents || [], renderer: debug ? gl.getParameter(debug.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER),
    buffer: [gl.drawingBufferWidth, gl.drawingBufferHeight], dpr: devicePixelRatio,
    frame: r.renderer.info.render.frame, renderCalls: r.renderer.info.render.calls, triangles: r.renderer.info.render.triangles,
@@ -106,6 +112,9 @@ async function sample(stage) {
    npcSpawnCount: n.actors.npcSpawnCount, npcSpawnWaiters: n.actors.npcSpawnWaiters.length };
  }, stage);
  emit('sample', value);
+ if (BENCHMARK && stage === 'playback' && !(value.bench?.frameCount > 0 && value.bench?.callbackDiagnostics?.matched > 0))
+  throw new Error('Main GameManager callback was not observed; refusing empty benchmark metrics.');
+ if (BENCHMARK && stage === 'playback-final' && !(value.boneAudit?.valid > 0)) throw new Error('No bone-atlas submission was audited; refusing benchmark result.');
  if(value.boneAudit?.skipped||value.boneAudit?.errors) throw new Error('Bone atlas audit found invalid inputs or an audit error; diagnostic workload stopped.');
  if (value.contextLost || value.contextEvents.some(event => event.type === 'lost' || event.type === 'restored')) throw new Error('WebGL context loss/restoration observed.');
  if (!/ANGLE.*Metal/.test(value.renderer)) throw new Error(`Expected real ANGLE Metal renderer, got ${value.renderer}.`);
@@ -125,9 +134,10 @@ async function sample(stage) {
  if (!['http:', 'https:'].includes(GAME_URL.protocol) || !['127.0.0.1', 'localhost', '[::1]'].includes(GAME_URL.hostname) || GAME_URL.username || GAME_URL.password) throw new Error('GPU_REPRO_URL must be a loopback HTTP(S) URL.');
  if (process.env.GPU_REPRO_EXCLUSIVE !== '1') throw new Error('Refusing offline replay without explicit GPU_REPRO_EXCLUSIVE=1.');
  if (![1, 2, 4, 8].includes(REPLAY_SPEED)) throw new Error('GPU_REPRO_SPEED must be one of 1, 2, 4, or 8.');
+ if (BENCHMARK && (REPLAY_SPEED !== 1 || KEEP_OPEN)) throw new Error('Crowd benchmarks require 1x playback and automatic browser teardown.');
  const bytes = readReplay(); assertExclusive();
  const base64 = bytes.toString('base64');
- emit('start', { replay: path.relative(ROOT, REPLAY_PATH), bytes: bytes.byteLength, viewport: [2560, 1267], dpr: 1,
+ emit('start', { benchmarkBuild, replaySha256: require('node:crypto').createHash('sha256').update(bytes).digest('hex'), replay: path.relative(ROOT, REPLAY_PATH), bytes: bytes.byteLength, viewport: [2560, 1267], dpr: 1,
   lockCamera: true, useChatData: false, headless: false, profile: PROFILE, cdpPort: KEEP_OPEN ? CDP_PORT : null,
   hardLimitMs: HARD_LIMIT_MS, keepOpen: KEEP_OPEN, replaySpeed: REPLAY_SPEED,
   nativeLog: 'For Chromium/ANGLE stderr, launch with DEBUG=pw:browser and redirect this process stderr.',
@@ -159,6 +169,8 @@ async function sample(stage) {
    }
   };
  }, DEV_PORT);
+ if (BENCHMARK) await context.addInitScript(benchmarkHost.installInPage);
+ if (syntheticConfig) await context.addInitScript(require('./synthetic-crowd.cjs').installInPage);
  page.on('console', message => { if (message.type() === 'error') emit('console-error', { text: message.text().slice(0, 1200) }); });
  page.on('pageerror', error => { pageFailed = true; process.exitCode = 2; emit('page-error', { stack: error.stack?.slice(0, 1500) }); });
  page.on('crash', () => { pageCrashed = true; emit('page-crash'); });
@@ -176,9 +188,14 @@ async function sample(stage) {
  });
  if (before.screen !== 'login' || before.actorsInWorld || before.gamePresent || before.contextLost || !/ANGLE.*Metal/.test(before.renderer))
   throw new Error(`Replay requires an initialized offline login screen with healthy ANGLE Metal: ${JSON.stringify(before)}`);
+ if (BENCHMARK) {
+  const served = await page.evaluate(() => globalThis.__l2CrowdBenchmarkBuild || null);
+  if (!served || served.token !== benchmarkBuild.token || served.variant !== benchmarkBuild.variant) throw new Error('Served client does not match the prepared benchmark build. Rebuild and check GPU_REPRO_URL.');
+ }
  if(BONE_AUDIT){const cdp=await context.newCDPSession(page);await cdp.send('Runtime.enable');const dir=path.join(ASSET_DIR,`bone-atlas-audit-${Date.now()}`);boneAuditSink=boneAuditHost.createAuditSink(cdp,dir);emit('bone-audit-installed',{directory:dir,...await boneAuditHost.installBoneAtlasAudit(page)});}
  const started = await page.evaluate(async ({ base64, speed }) => {
   const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+  globalThis.__l2SiegeBench?.start();
   const r = renderManager, n = r.manGame.getComponent('network'), original = n.movement.onTeleport;
   window.__offlineReplayTeleportCount = 0; window.__offlineReplayActorDraws = 0;
   window.__offlineAtlasSizes=[];
@@ -214,15 +231,21 @@ async function sample(stage) {
  const playbackStart = Date.now();
  const durationLimit = Number.isFinite(started.replayDurationSec) ? Math.ceil(started.replayDurationSec * 1000 / REPLAY_SPEED) + 10000 : 120000;
  const remainingHardLimit = HARD_LIMIT_MS - (Date.now() - startedAt) - 5000;
- const playbackLimitMs = Math.max(1000, Math.min(durationLimit, remainingHardLimit));
+ const playbackLimitMs = Math.max(1000, Math.min(durationLimit + (syntheticConfig ? 160000 : 0), remainingHardLimit));
  emit('playback-observation-limit', { playbackLimitMs, replayDurationSec: started.replayDurationSec, replaySpeed: REPLAY_SPEED, graceMs: 10000 });
- let ended = false;
+ let ended = false, syntheticDone = false;
  while (Date.now() - playbackStart < playbackLimitMs) {
   if (pageCrashed) throw new Error('Page crashed during replay.');
   const state = await sample('playback');
+  if (!syntheticDone && syntheticHost.shouldStart(state, syntheticConfig)) {
+   syntheticDone = true;
+   emit('synthetic-crowd-phase', await syntheticHost.runPhase(page, syntheticConfig));
+   await sample('synthetic-complete');
+  }
   if (!state.replay || state.replay.ended || state.replay.time > state.replay.duration + 0.01) { ended = true; break; }
   await page.waitForTimeout(1000);
  }
+ if (syntheticConfig && !syntheticDone) throw new Error('Replay did not reach the configured synthetic trigger');
  const finalState = await sample('playback-final');
  if (pageCrashed) throw new Error('Page crashed during replay.');
  if (!ended && !finalState.replay?.ended) throw new Error('Replay did not reach its recorded end within the bounded observation window.');
