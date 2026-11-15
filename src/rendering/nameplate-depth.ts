@@ -25,13 +25,13 @@ export class NameplateDepth {
         renderer.domElement.addEventListener("webglcontextrestored", this.contextRestored);
     }
 
-    public begin(scene: Scene) {
+    public begin(scene: Scene, required = false) {
         this.arrNameplates.length = 0;
         this.copied = false;
         for (const object of scene.children) {
             if ((object as any).isNameplate && object.visible && (object as Nameplate).material.visible) this.arrNameplates.push(object as Nameplate);
         }
-        this.active = this.arrNameplates.length > 0;
+        this.active = required || this.arrNameplates.length > 0;
     }
 
     public beforeRender(material: Material, object: Object3D) {

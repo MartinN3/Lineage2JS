@@ -3,6 +3,9 @@
 The nameplate-depth regression runs a minimal scene in real Chromium WebGL2. It
 forces context loss and restoration for single-sample and multisample render
 targets. No Lineage II assets or game server are required.
+It also renders quest alarms without visible nameplates, clears and repopulates
+their markers as during a teleport/loading transition, and checks that alarms
+skip invalid depth during context loss and resume after restoration.
 
 After installing the project's build dependencies, install the optional browser
 test tool and its Chromium browser without changing the project manifest:

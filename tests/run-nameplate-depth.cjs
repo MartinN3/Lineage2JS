@@ -37,7 +37,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
         await page.waitForFunction(() => window.nameplateDepthResult, null, { timeout: 30000 });
         const result = await page.evaluate(() => window.nameplateDepthResult);
         if (!result.passed) throw new Error(result.error);
-        console.log('Nameplate depth WebGL context loss/restoration passed (0 and 4 samples)');
+        console.log('Nameplate and quest-alarm depth, transition and WebGL recovery checks passed (0 and 4 samples)');
     } finally {
         if (browser) await browser.close();
         fs.rmSync(directory, { recursive: true, force: true });
