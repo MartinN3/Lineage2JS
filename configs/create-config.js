@@ -186,7 +186,8 @@ function createModuleConfig({ name, resolve, entry: _entry, library, isWorker })
             }
         }, {
             test: /\.(js|jsx|ts|tsx)$/,
-            exclude: /(node_modules|submodules|three-wasm)/,
+            exclude: (file) => /(?:node_modules|submodules|three-wasm)/.test(file)
+                && !/[\\/]node_modules[\\/]@l2js[\\/]core[\\/]/.test(file),
             use: [
                 {
                     loader: "babel-loader",
@@ -241,7 +242,9 @@ function createModuleConfig({ name, resolve, entry: _entry, library, isWorker })
                 allowedHosts: "all",
                 hot: false,
                 liveReload: process.env.LIVE_RELOAD !== "0",
-                client: process.env.LIVE_RELOAD === "0" ? false : undefined,
+                client: process.env.LIVE_RELOAD === "0" ? false : {
+                    overlay: { runtimeErrors: false }
+                },
                 static: httpAssets ? {
                     directory: path.resolve(__dirname, "../", dirAssets),
                     publicPath: "/assets"

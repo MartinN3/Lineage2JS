@@ -44,7 +44,12 @@ const tmpActorRotation = new Rotator();
 function callZoneEvent(pawn: BaseActor | Actor | CollidingMesh, host: ScriptHost_T, name: string, args: ScriptValue_T[]): ScriptValue_T {
     const object = host as any;
 
-    if (object.findComponent) return object.getComponent("script").call(name, args);
+    if (object.findComponent) {
+        // Streaming can release a sector's zone/volume before a surviving pawn
+        // transitions away from it. Released hosts no longer own a script.
+        if (object.isPendingKill?.() || object.getUnrealScriptProperty("bPendingDelete")) return null;
+        return object.getComponent("script").call(name, args);
+    }
     return pawn.getComponent<ScriptComponent>("script").getVM().call(host, name, args);
 }
 
