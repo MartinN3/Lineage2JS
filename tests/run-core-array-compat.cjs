@@ -4,7 +4,6 @@ const path = require('node:path');
 const webpack = require('webpack');
 (async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'core-array-compat-'));
-    const baseline = process.argv.includes('--baseline');
     const webkit = process.argv.includes('--webkit');
     let browser;
     try {
@@ -13,7 +12,6 @@ const webpack = require('webpack');
                 mode: 'development', target: webkit ? 'web' : 'node',
                 entry: path.join(__dirname, 'core-array-compat.ts'),
                 output: { path: directory, filename: 'test.js' },
-                plugins: [new webpack.DefinePlugin({ APPLY_ARRAY_COMPAT: JSON.stringify(!baseline) })],
                 resolve: { extensions: ['.ts', '.js'], fallback: { path: require.resolve('path-browserify') }, alias: { '@l2js/core': path.resolve(__dirname, '../node_modules/@l2js/core/src') } },
                 module: { rules: [{ test: /\.ts$/, use: {
                     loader: require.resolve('babel-loader'), options: { presets: [[require.resolve('@babel/preset-typescript'), { allowDeclareFields: true, allowNamespaces: true }]] }

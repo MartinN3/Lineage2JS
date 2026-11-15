@@ -15,20 +15,22 @@ the game. No game assets, server or WebGL context are used.
 
 # Primitive array compatibility regression
 
-Run the CPU-only Node checks after installing the project dependencies:
+Run the core's CPU-only Node checks against the pinned core fork after installing
+the project dependencies:
 
 ```sh
 node tests/run-core-array-compat.cjs
 ```
 
-With optional Playwright and its WebKit browser installed, test the Safari engine:
+With optional Playwright and its WebKit browser installed, test the WebKit engine:
 
 ```sh
 PLAYWRIGHT_MODULE=/path/to/node_modules/playwright node tests/run-core-array-compat.cjs --webkit
 ```
 
-Add `--baseline` to run the original dependency implementation; WebKit rejects
-its misaligned typed-array views. No game assets, server or WebGL context are used.
+The checks exercise the core implementation directly, including exact-range
+copies for unaligned arrays and zero-copy behavior for aligned arrays. No game
+assets, server or WebGL context are used.
 
 # Browser rendering regression
 
