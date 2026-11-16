@@ -15,12 +15,11 @@ function transpile(source) {
     return ts.transpile(source, { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.None });
 }
 
-const baselineScript = transpile(baselineFunction[0].replace('function encodeBitmap(', 'window.__encodeBitmap = function encodeBitmap('));
+const baselineScript = `(function(){\n${transpile(baselineFunction[0])}\nwindow.__baselineEncodeBitmap = encodeBitmap;\n})();`;
 const candidateSource = fs.readFileSync(path.join(__dirname, '../src/nwindow/ui-image.ts'), 'utf8')
-    .replace('export function getCanvasImageUrl(', 'window.__getCanvasImageUrl = function getCanvasImageUrl(')
-    .replace('export function prepareCanvasImageUrls(', 'window.__prepareCanvasImageUrls = function prepareCanvasImageUrls(')
-    .replace('function encodeBitmap(', 'window.__encodeBitmap = function encodeBitmap(');
-const candidateScript = transpile(candidateSource);
+    .replace('export function getCanvasImageUrl(', 'function getCanvasImageUrl(')
+    .replace('export function prepareCanvasImageUrls(', 'function prepareCanvasImageUrls(');
+const candidateScript = `(function(){\n${transpile(candidateSource)}\nwindow.__getCanvasImageUrl = getCanvasImageUrl;\nwindow.__prepareCanvasImageUrls = prepareCanvasImageUrls;\nwindow.__encodeBitmap = encodeBitmap;\n})();`;
 
 function percentile(values, p) {
     const sorted = [...values].sort((a, b) => a - b);
@@ -201,7 +200,7 @@ async function main() {
                     const canvas = canvasFor(index);
                     const started = performance.now();
                     const url = mode === 'baseline'
-                        ? URL.createObjectURL(window.__encodeBitmap(canvas))
+                        ? URL.createObjectURL(window.__baselineEncodeBitmap(canvas))
                         : window.__getCanvasImageUrl(canvas);
                     const encodeMs = performance.now() - started;
                     const bytes = url.startsWith('blob:')
