@@ -1,7 +1,8 @@
 name: Fork-only UI image Chrome benchmark
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [test/ui-image-chrome-benchmark]
 
 permissions:
   contents: read
