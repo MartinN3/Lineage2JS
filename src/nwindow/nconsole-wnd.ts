@@ -27,6 +27,7 @@ import { convertDDSTextureInfo } from "../assets/unreal/dds/dxt-decode";
 import { type MenuButton_T } from "./nc-menu-wnd";
 import { type MainTab_T } from "./nc-main-wnd";
 import { type MapPartyMember_T } from "./nc-map-wnd";
+import { getAbnormalStatusView } from "./abnormal-status";
 import { UI_SCALES, PAWN_LIMITS } from "./nc-option-wnd";
 import { DialogType_T } from "./nc-dialog-box";
 import type NetworkManager from "../network/network-manager";
@@ -2101,11 +2102,11 @@ export class NConsoleWnd implements IEngineComponent<GameManager> {
     public showSSQStatus(status: GamePackets.SSQStatus_T) { this.ssqMainBoard.show(status); }
 
     public setAbnormalStatus(effects: GamePackets.AbnormalStatus_T[]) {
-        const active = new Set(effects.filter(effect => this.strings.skillInfos[`${effect.id}:${effect.level}`]?.isToggle).map(effect => `${effect.id}:${effect.level}`));
+        const { activeSkills, visibleEffects } = getAbnormalStatusView(effects, this.strings.skillInfos);
 
-        this.shortCutWnd.setActiveSkills(active);
-        this.skillWnd.setActiveSkills(active);
-        this.abnormalStatusWnd.setEffects(effects.filter(effect => !active.has(`${effect.id}:${effect.level}`)).slice(0, 31));
+        this.shortCutWnd.setActiveSkills(activeSkills);
+        this.skillWnd.setActiveSkills(activeSkills);
+        this.abnormalStatusWnd.setEffects(visibleEffects);
     }
     public setSecondaryAbnormalStatus(effects: GamePackets.AbnormalStatus_T[]) { this.abnormalStatusWnd.setSecondaryEffects(effects); }
     public setShortBuff(effect: GamePackets.AbnormalStatus_T) {
