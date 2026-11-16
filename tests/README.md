@@ -87,3 +87,20 @@ The test uses the actual actor release and pawn movement/zone-transition code
 with an isolated collision fixture. It needs no game assets, server, browser or
 GPU. It covers released and releasing volume hosts, live-volume callbacks,
 retired zones and preservation of errors on live hosts missing their script.
+
+# Target tooltip lifecycle regression
+
+After installing the project dependencies and optional Playwright/Chromium,
+run the browser DOM regression with:
+
+```sh
+node tests/run-target-tooltip.cjs
+```
+
+It constructs the real target-status window against a small DOM layer fixture
+and verifies tooltip cleanup on target refresh, repeat hover, pointer leave,
+collapse, direct window hide and target clear/change. It does not connect to a
+game server or create a GPU context. The browser test keeps the pointer
+stationary across HP updates and checks that the hovered icon and tooltip stay
+in place. It also checks that an unavailable passive skill inserted before a
+visible icon triggers the needed layout rebuild.
