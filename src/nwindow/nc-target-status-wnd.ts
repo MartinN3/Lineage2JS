@@ -44,6 +44,8 @@ export class NCTargetStatusWnd extends NCStatusWnd { // NCTargetStatusWnd: NCCon
     protected readonly infoButton: NDomButton_T;
     protected readonly closeButton: NDomButton_T;
     protected readonly tooltip = new NCTooltip();
+    protected hoveredTooltip: HTMLDivElement = null;
+    protected skillLayoutKey: string = null;
     protected target: TargetStatus_T = null;
     protected isExpanded = false;
 
@@ -80,6 +82,7 @@ export class NCTargetStatusWnd extends NCStatusWnd { // NCTargetStatusWnd: NCCon
         const texture = this.isExpanded ? TEX_INFO : TEX_INFO_DOWN;
 
         this.isExpanded = !this.isExpanded;
+        if (!this.isExpanded) this.clearTooltip();
         this.infoButton.setTextures(texture, texture, texture);
         this.update();
     }
@@ -93,6 +96,16 @@ export class NCTargetStatusWnd extends NCStatusWnd { // NCTargetStatusWnd: NCCon
         this.update();
     }
 
+    public setVisible(isVisible: boolean) {
+        if (!isVisible) this.clearTooltip();
+        super.setVisible(isVisible);
+    }
+
+    protected clearTooltip() {
+        if (this.hoveredTooltip) this.hoveredTooltip.remove();
+        this.hoveredTooltip = null;
+    }
+
     protected update() {
         const layer = this.layer;
         const strings = layer.getManager().strings;
@@ -101,10 +114,38 @@ export class NCTargetStatusWnd extends NCStatusWnd { // NCTargetStatusWnd: NCCon
         const H = this.isExpanded ? HEIGHT_EXPANDED : HEIGHT_COLLAPSED;
         const barW = W - 22;
         const [hpBack, hp, mpBack, mp] = this.arrBars;
+        const skills = target && this.isExpanded
+            ? (strings.npcPassiveSkills[target.npcId] || []).map((id, index) => ({ id, index, skill: strings.skillInfos[`${id}:1`] })).filter(({ skill }) => skill && skill.icon && layer.hasTexture(skill.icon))
+            : [];
+        const skillLayoutKey = JSON.stringify([target ? target.npcId : 0, this.isExpanded, skills.map(({ id, index, skill }) => [id, index, skill.icon, skill.name, skill.description])]);
 
         this.layoutFrame(H, this.isExpanded ? [TEX_EX_BACK1, TEX_EX_BACK2, TEX_EX_BACK3] : [TEX_BACK1, TEX_BACK2, TEX_BACK3], H);
         layer.place(this.closeButton, W - 19, 6);
-        this.skills.replaceChildren();
+        if (skillLayoutKey !== this.skillLayoutKey) {
+            this.clearTooltip();
+            this.skills.replaceChildren();
+            this.skillLayoutKey = skillLayoutKey;
+
+            skills.forEach(({ skill, index }) => {
+                const x = 18 + 18 * (index % 8), y = 40 + 18 * Math.floor(index / 8);
+                const icon = layer.tile(this.skills, x, y, 15, 15, 0, 0, 32, 32, skill.icon);
+                let tooltip: HTMLDivElement = null;
+                const hideTooltip = () => {
+                    if (tooltip) tooltip.remove();
+                    if (this.hoveredTooltip === tooltip) this.hoveredTooltip = null;
+                    tooltip = null;
+                };
+
+                icon.style.pointerEvents = "auto";
+                icon.addEventListener("mouseenter", () => {
+                    hideTooltip();
+                    this.clearTooltip();
+                    tooltip = this.tooltip.createDOM(layer, this.element, parseFloat(this.element.style.left) + x, parseFloat(this.element.style.top) + y, { title: skill.name, lines: [], description: skill.description, minimumWidth: 144 });
+                    this.hoveredTooltip = tooltip;
+                });
+                icon.addEventListener("mouseleave", hideTooltip);
+            });
+        }
 
         for (const bar of this.arrBars) bar.hidden = true;
         this.setName(target ? target.name : "", target && target.showHp ? getConColor(target.levelDifference) : NAME_COLOR, 12, 9, W - 30, true);
@@ -121,21 +162,6 @@ export class NCTargetStatusWnd extends NCStatusWnd { // NCTargetStatusWnd: NCCon
             }
         }
 
-        if (!this.isExpanded) return;
-
-        (strings.npcPassiveSkills[target.npcId] || []).forEach((id, index) => {
-            const skill = strings.skillInfos[`${id}:1`];
-
-            if (!skill || !skill.icon || !layer.hasTexture(skill.icon)) return;
-
-            const x = 18 + 18 * (index % 8), y = 40 + 18 * Math.floor(index / 8);
-            const icon = layer.tile(this.skills, x, y, 15, 15, 0, 0, 32, 32, skill.icon);
-            let tooltip: HTMLDivElement = null;
-
-            icon.style.pointerEvents = "auto";
-            icon.addEventListener("mouseenter", () => tooltip = this.tooltip.createDOM(layer, this.element, parseFloat(this.element.style.left) + x, parseFloat(this.element.style.top) + y, { title: skill.name, lines: [], description: skill.description, minimumWidth: 144 }));
-            icon.addEventListener("mouseleave", () => { if (tooltip) tooltip.remove(); tooltip = null; });
-        });
     }
 }
 
