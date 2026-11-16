@@ -31,7 +31,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
         await page.waitForFunction(() => window.shopPaintResult, null, { timeout: 10000 });
         const result = await page.evaluate(() => window.shopPaintResult);
         if (!result.passed) throw new Error(result.error);
-        console.log(`Baseline reproduces empty-path failure: ${result.baselineFailedOnEmptyPath}. Candidate paints ${result.rows} rows, loads ${result.texturePaths.length} valid icons, and preserves ${result.hoverHandlers} hover handlers.`);
+        console.log(`Shop paints ${result.rows} rows, loads ${result.texturePaths.length} optional icons, and preserves ${result.hoverHandlers} hover handlers.`);
     } finally {
         if (browser) await browser.close();
         fs.rmSync(directory, { recursive: true, force: true });

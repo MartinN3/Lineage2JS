@@ -17,7 +17,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
                 output: { path: directory, filename: "test.js", publicPath: "" },
                 plugins: [new webpack.DefinePlugin({ BITMAP_NAMEPLATES: "false" })],
                 resolve: { extensions: [".ts", ".js"] },
-                module: { rules: [{ test: /\.ts$/, exclude: /node_modules/, use: {
+                module: { rules: [{ test: /zip-module\.wasm$/, type: "asset/inline" }, { test: /\.ts$/, exclude: /node_modules/, use: {
                     loader: require.resolve("babel-loader"),
                     options: { presets: [[require.resolve("@babel/preset-typescript"), { allowDeclareFields: true }]] }
                 } }] }

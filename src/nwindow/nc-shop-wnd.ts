@@ -12,11 +12,12 @@ const TEX_UP = "L2UI_CH3.Button.UpButton";
 const TEX_DOWN = "L2UI_CH3.Button.DownButton";
 const TEX_BUTTON = SKIN_SLOTS.button;
 const TEX_BUTTON_DOWN = SKIN_SLOTS.buttonDown;
+const TEX_DEFAULT_ICON = "NWindow.BlackTexture"; // NWindow 0x10103a3e: an item whose icon did not load gets this one
 
 type ShopDrag_T = { side: number, item: ShopItem_T, isDragging: boolean };
 
 export class NCShopWnd {
-    public static getTextures() { return [TEX_BACK, TEX_SELECTED, TEX_UP, TEX_DOWN, TEX_BUTTON, TEX_BUTTON_DOWN, ...NCFrameCtrl.getTextures(), ...NDOM_SCROLL_TEXTURES]; }
+    public static getTextures() { return [TEX_BACK, TEX_SELECTED, TEX_UP, TEX_DOWN, TEX_BUTTON, TEX_BUTTON_DOWN, TEX_DEFAULT_ICON, ...NCFrameCtrl.getTextures(), ...NDOM_SCROLL_TEXTURES]; }
     public readonly element: HTMLDivElement;
     public onMove: (side: number, item: ShopItem_T, isPointer: boolean, isDrag: boolean) => void = null;
     public onConfirm: (isSell: boolean, items: ShopItem_T[]) => void = null;
@@ -131,7 +132,7 @@ export class NCShopWnd {
             if (this.drag.isDragging) return;
 
             this.drag.isDragging = true;
-            this.layer.getManager().setCursor(`url(${layer.getWrapUrl(layer.getManager().strings.itemIcons[this.drag.item.itemId])}) 16 16, default`);
+            this.layer.getManager().setCursor(`url(${layer.getWrapUrl(this.getIcon(this.drag.item))}) 16 16, default`);
             document.documentElement.classList.add("ndom-item-drag");
         }, true);
         window.addEventListener("mouseup", event => {
@@ -230,6 +231,11 @@ export class NCShopWnd {
     }
     protected getLabelIds() { return this.isPreview ? [811, 812, 813] : [this.isSell ? 138 : 137, this.isSell ? 137 : 139, this.isSell ? 143 : 142]; }
     protected getTooltipContext(side: number): number { return this.isStore ? 0 : this.isSell ? 8 : side ? 4 : 7; }
+    protected getIcon(item: ShopItem_T) {
+        const icon = this.layer.getManager().strings.itemIcons[item.itemId];
+
+        return icon && this.layer.hasTexture(icon) ? icon : TEX_DEFAULT_ICON;
+    }
     protected hoverItem(side: number, index: number, buttons: number) {
         if ((buttons & 1) && (this.heldSide !== side || document.activeElement !== this.lists[side])) index = this.hoveredIndices[side];
         else this.hoveredIndices[side] = index;
@@ -266,7 +272,7 @@ export class NCShopWnd {
     public async paintItems(scrollSide = -1) {
         const generation = ++this.generation, strings = this.layer.getManager().strings;
 
-        await this.layer.loadTextures(this.getIconPaths(this.items, strings.itemIcons));
+        await this.layer.loadTextures(this.getIconPaths(this.items, strings.itemIcons).map(path => `?${path}`));
         if (generation !== this.generation) return;
 
         this.lists.forEach((list, side) => {
@@ -294,8 +300,7 @@ export class NCShopWnd {
 
                 frame.dataset.selected = "";
                 frame.hidden = item !== this.selected[side];
-                const icon = strings.itemIcons[item.itemId];
-                if (icon) this.layer.tile(button, 1, 1, 32, 32, 0, 0, 32, 32, icon);
+                this.layer.tile(button, 1, 1, 32, 32, 0, 0, 32, 32, this.getIcon(item));
                 if (!this.isSell && !this.isPreview && !this.isStore && side === 0 && item.count > 0) this.layer.text(button, String(item.count), 0xffff0000, FontType_T.SMALL, 1, 1);
                 button.addEventListener("mouseenter", event => this.hoverItem(side, index, event.buttons));
                 button.addEventListener("mouseleave", () => {

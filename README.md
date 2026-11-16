@@ -15,7 +15,7 @@ This is the hard part. Re-creating a game client even if I had the original sour
 I'm not a vanilla purist so if there's some data that's not critical but is hiding there in the binary, I will just skip it if it's possible to do without it.
 
 ## Core dependency
-This client uses the [`MartinN3/l2js-core` Safari alignment fix](https://github.com/MartinN3/l2js-core/commit/a62bc66c2a0222d6f8d936f40fa14d3be8694b65), based on upstream `optimize`. The lockfile pins the exact tested commit. Once the fix is accepted upstream, update the dependency to the upstream revision.
+The fork’s `develop` branch integrates upstream `stable` and uses [`MartinN3/l2js-core:develop`](https://github.com/MartinN3/l2js-core/tree/develop), which integrates the matching upstream core `stable` branch. The lockfile pins the exact tested core commit; update both repositories together when following upstream changes. The Safari array-alignment fix now uses the upstream implementation, with the fork’s regression coverage retained.
 
 ## When?
 It's here and it's working. There's always parity or performance issues left to resolve but otherwise I'm more than happy with the result. The road was long I started prototyping it rougly in December of 2020 and I had almost all of the required puzzle pieces already back 2022 but there was still so much work to be done but it finally all clicked into place.

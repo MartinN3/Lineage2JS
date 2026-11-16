@@ -39,7 +39,7 @@
     },
     "dependencies": {
         "@dimforge/rapier3d": "^0.9.0",
-        "@l2js/core": "git+ssh://git@github.com:MartinN3/l2js-core.git#a62bc66c2a0222d6f8d936f40fa14d3be8694b65",
+        "@l2js/core": "git+ssh://git@github.com:MartinN3/l2js-core.git#develop",
         "chokidar": "^5.0.0",
         "egoroof-blowfish": "^4.0.3",
         "gmp-wasm": "^1.1.0",
