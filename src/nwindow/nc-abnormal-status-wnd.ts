@@ -3,6 +3,7 @@ import NCTooltip from "./nc-tooltip";
 import { DigitFont_T } from "./nwindow-canvas";
 import type NDomLayer from "./ndom";
 import type { AbnormalStatus_T } from "../network/game-packets";
+import { getAbnormalStatusLayout, getAbnormalStatusSlotIndex, isIndefiniteToggle } from "./abnormal-status";
 
 const timerSecondsPerMillisecond = Math.fround(0.001);
 
@@ -53,7 +54,9 @@ export class NCAbnormalStatusWnd {
     public hasEffects() { return this.effects.length > 0 || this.secondaryEffects.length > 0 || this.shortEffect !== null; }
 
     public setEffects(effects: AbnormalStatus_T[]) {
-        this.effects = effects.map(effect => ({ ...effect, alpha: 255, isFading: true, tooltipTime: effect.duration }));
+        const skillInfos = this.layer.getManager().strings.skillInfos;
+
+        this.effects = effects.map(effect => ({ ...effect, alpha: 255, isFading: true, tooltipTime: isIndefiniteToggle(effect, skillInfos) ? -1 : effect.duration }));
         this.hoveredSlot = -1;
         void this.loadIcons();
     }
@@ -64,7 +67,9 @@ export class NCAbnormalStatusWnd {
     }
 
     public setShortEffect(effect: AbnormalStatus_T) {
-        this.shortEffect = effect ? { ...effect, alpha: 255, isFading: true, tooltipTime: effect.duration } : null;
+        const skillInfos = this.layer.getManager().strings.skillInfos;
+
+        this.shortEffect = effect ? { ...effect, alpha: 255, isFading: true, tooltipTime: isIndefiniteToggle(effect, skillInfos) ? -1 : effect.duration } : null;
         void this.loadIcons();
     }
 
@@ -88,13 +93,17 @@ export class NCAbnormalStatusWnd {
 
         for (let i = 0; i < count + (this.shortEffect ? 1 : 0); i++) {
             const effect = i < count ? this.effects[i] : this.shortEffect;
+            const skill = strings.skillInfos[`${effect.id}:${effect.level}`];
+
+            if (effect.duration === 2147483647 && skill?.isToggle) {
+                effect.tooltipTime = -1;
+                continue;
+            }
 
             if (id === 249) {
                 if (effect.duration <= 0) continue;
 
                 effect.duration--;
-
-                const skill = strings.skillInfos[`${effect.id}:${effect.level}`];
 
                 effect.tooltipTime = skill && skill.isDebuff ? -1 : effect.duration;
             } else if (effect.duration >= 0 && effect.duration <= 30) {
@@ -119,10 +128,9 @@ export class NCAbnormalStatusWnd {
     protected updateLayout() {
         const count = this.effects.length;
         const secondaryCount = this.secondaryEffects.length + (this.shortEffect ? 1 : 0);
-        const rows = Math.ceil(Math.min(count, 30) / 10);
-        const H = secondaryCount ? 26 + rows * 25 : count ? 1 + rows * 25 : 0, layer = this.layer;
+        const { width, height: H } = getAbnormalStatusLayout(count, secondaryCount), layer = this.layer;
 
-        this.width = count > 10 ? 272 : count || secondaryCount ? 12 + Math.max(count, secondaryCount) * 26 : 0;
+        this.width = width;
         this.height = H;
         this.element.style.width = `${this.width}px`;
         this.element.style.height = `${H}px`;
@@ -145,10 +153,10 @@ export class NCAbnormalStatusWnd {
     }
 
     protected getSlotAt(x: number, y: number): number {
-        x -= 12;
         if (x < 0 || x > 270 || y < 0 || y > 108) return -1;
 
-        const slot = Math.trunc(y / 27) * 10 + Math.trunc(x / 27);
+        const slot = getAbnormalStatusSlotIndex(x, y);
+        if (slot < 0) return -1;
 
         const secondaryStart = Math.ceil(Math.min(this.effects.length, 30) / 10) * 10;
 
@@ -208,15 +216,16 @@ export class NCAbnormalStatusWnd {
 
         for (let i = 0; i < Math.min(this.effects.length, 30); i++) {
             const effect = this.effects[i], skill = strings.skillInfos[`${effect.id}:${effect.level}`];
+            const x = 13 + i % 10 * 26, y = 1 + Math.floor(i / 10) * 25;
 
-            this.paintSlot(index++, 13 + i % 10 * 26, 1 + Math.floor(i / 10) * 25, effect, effect.alpha, !!(skill && skill.isDebuff), effect.duration);
+            this.paintSlot(index++, x, y, effect, effect.alpha, !!(skill && skill.isDebuff), effect.duration === 2147483647 && skill?.isToggle ? -1 : effect.duration);
         }
 
         if (this.shortEffect) {
             const effect = this.shortEffect, skill = strings.skillInfos[`${effect.id}:${effect.level}`];
             const isDebuff = !!(skill && skill.isDebuff);
 
-            this.paintSlot(index++, 13, 1 + secondaryRow * 25, effect, effect.alpha, false, isDebuff ? -1 : effect.duration);
+            this.paintSlot(index++, 13, 1 + secondaryRow * 25, effect, effect.alpha, false, effect.duration === 2147483647 && skill?.isToggle || isDebuff ? -1 : effect.duration);
         }
 
         this.secondaryEffects.forEach((effect, i) => this.paintSlot(index++, 13 + (i + (this.shortEffect ? 1 : 0)) * 26, 1 + secondaryRow * 25, effect, 255, false, -1));
