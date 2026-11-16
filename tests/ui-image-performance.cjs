@@ -212,7 +212,7 @@ async function main() {
                     const decodeDrawMs = performance.now() - drawStarted;
                     const cssMs = await cssPaint(url);
                     URL.revokeObjectURL(url);
-                    return { encodeMs, decodeDrawMs, cssMs, bytes, pixel, expectedPixel };
+                    return { encodeMs, decodeDrawMs, cssMs, bytes, format: url.startsWith('blob:') ? 'BMP' : 'PNG', pixel, expectedPixel };
                 }
                 const observations = { baseline: [], candidate: [] };
                 for (let i = 0; i < iterations + 3; i++) {
@@ -236,7 +236,15 @@ async function main() {
                         : summarize(values);
                 }
             }
-            results.cases.push({ workload, summaries });
+            const pairedDelta = {};
+            for (const metric of ['encodeMs', 'decodeDrawMs', 'cssMs', 'bytes']) {
+                const deltas = data.candidate.map((sample, index) => ({ ms: sample[metric] - data.baseline[index][metric] }));
+                pairedDelta[metric] = metric === 'bytes'
+                    ? { n: deltas.length, medianBytes: percentile(deltas.map(value => value.ms), .5), p95Bytes: percentile(deltas.map(value => value.ms), .95) }
+                    : summarize(deltas);
+            }
+            const observedFormats = Object.fromEntries(['baseline', 'candidate'].map(mode => [mode, [...new Set(data[mode].map(sample => sample.format))]]));
+            results.cases.push({ workload, observedFormats, summaries, pairedDelta });
             await page.close();
         }
     } finally {
