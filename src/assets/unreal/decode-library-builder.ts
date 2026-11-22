@@ -1,6 +1,7 @@
 import { v5 as seededUuid } from "uuid";
 import StringSet from "./utils/string-set";
 import type PackageCache from "../decode-worker/package-cache";
+import { buildLodMesh, extendLodLighting } from "./static-mesh/static-mesh-lod";
 import FBox from "./un-box";
 import FVector from "./un-vector";
 import type { UTexture, ITextureDecodeInfo } from "./un-texture";
@@ -30,6 +31,8 @@ import type { UEmitter } from "./un-emitter";
 import type { UPawn } from "./un-pawn";
 import type { UStaticMeshActor } from "./static-mesh/un-static-mesh-actor";
 import type { ULight } from "./un-light";
+import type UProjector from "./un-projector";
+import type UAntiPortalActor from "./un-anti-portal-actor";
 import type { UMusicVolume } from "./un-music-volume";
 import type { UBlockingVolume } from "./un-blocking-volume";
 import type { UAmbientSoundObject } from "./un-ambient-sound";
@@ -76,6 +79,7 @@ export class DecodeLibraryBuilder {
     protected readonly alphaPalettes = new Set<string>();
     protected readonly materialSizes = new Map<string, { width: number, height: number }>();
     protected readonly staticMeshMetadata = new Map<string, any>();
+    protected readonly cacheLodMeshes = new Map<string, ReturnType<typeof buildLodMesh>>();
 
     public constructor(library: DecodeLibrary, settings: LoadSettings_T, packageCache: PackageCache = null) {
 
@@ -256,11 +260,30 @@ export class DecodeLibraryBuilder {
         const metadata = {
             renderBounds: mesh.getRenderBoundingBox().getDecodeInfo(),
             collisionBounds: (mesh as any).collisionModel ? (mesh as any).collisionModel.loadSelf().getCollisionBoundingBox().getDecodeInfo() : null,
+            lods: mesh.getLodReferences(),
+            billboard: mesh.billboard,
             useVertexColor: mesh.useVertexColor
         };
         this.staticMeshMetadata.set(mesh.uuid, metadata);
         this.packageCache?.end(mesh, this.library, { object: result.object, metadata, colorMaterials: result.colorMaterials });
         return this.packageCache ? this.getStaticMeshVariant(result.object, modifiers) : result.object;
+    }
+
+    public pullActorStaticMesh(mesh: UStaticMesh): IStaticMeshObjectDecodeInfo {
+        const cached = this.cacheLodMeshes.get(mesh.uuid);
+        if (cached) return cached.mesh;
+        const base = this.pullStaticMesh(mesh), refs = this.getStaticMeshMetadata(mesh).lods;
+        if (!refs.length) return base;
+
+        const levels = [{ mesh: base, range: 0, billboard: false }];
+        for (const ref of refs) {
+            const source: UStaticMesh = (mesh as any).pkg.loader.getPackage(ref.path).fetchObject(ref.index + 1);
+            const level = this.pullStaticMesh(source);
+            levels.push({ mesh: level, range: ref.range, billboard: this.getStaticMeshMetadata(source).billboard });
+        }
+        const result = buildLodMesh(this.library, levels);
+        this.cacheLodMeshes.set(mesh.uuid, result);
+        return result.mesh;
     }
 
     protected getStaticMeshVariant(info: IStaticMeshObjectDecodeInfo, modifiers?: string[]): IStaticMeshObjectDecodeInfo {
@@ -367,6 +390,8 @@ export class DecodeLibraryBuilder {
 
         this.library.bspRootOutside = result.bspRootOutside;
         this.library.bspNodes.push(...result.bspNodes);
+        Object.assign(this.library.bspAntiPortals, result.bspAntiPortals);
+        Object.assign(this.library.bspPortalPolygons, result.bspPortalPolygons);
         this.library.bspColliders.push(...result.bspColliders);
         this.library.leafActors.push(...result.leafActors);
         this.library.nodeToSection.push(...result.nodeToSection);
@@ -517,6 +542,22 @@ export class DecodeLibraryBuilder {
             }
 
             switch (actor.constructor.friendlyName) {
+                case "AntiPortalActor": {
+                    const antiPortal = actor.loadSelf() as UAntiPortalActor;
+                    if (antiPortal.isDeleteMe) break;
+                    const info = antiPortal.getDecodeInfo(level.getModel());
+
+                    if (info) this.library.antiPortals.push(info);
+                    break;
+                }
+                case "Projector": {
+                    const projector = actor.loadSelf() as UProjector;
+                    if (projector.isDeleteMe) break;
+                    const info = projector.getDecodeInfo(this);
+
+                    if (info) this.library.projectors.push(info);
+                    break;
+                }
                 case "TerrainInfo": {
                     if (this.settings.loadTerrain !== false)
                         this.pullTerrainInfo(actor.loadSelf() as ATerrainInfo);
@@ -661,6 +702,7 @@ export class DecodeLibraryBuilder {
         this.setScriptClass(actor, result.object, true);
 
         this.library.exportedActors.add(actor.uuid);
+        if (result.object.instance.mesh.lods) extendLodLighting(result.object.instance, this.cacheLodMeshes.get(result.object.instance.mesh.uuid).nearest);
         this.library.geometryInstances[result.geometryUuid]++;
 
         const zoneInfo = this.library.bspZones[this.library.bspZoneIndexMap[result.zoneUuid]].zoneInfo;

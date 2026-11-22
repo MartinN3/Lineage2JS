@@ -3,6 +3,7 @@ import { EAttachMethod_T, type USkillVisualEffect, type FSkillActionInfo, type U
 import DecodeLibrary from "../decode-library";
 import type { NpcSkillAttack_T, NpcSkillAttachOn_T, NpcSkillEffectAction_T, NpcSkillEffectPhase_T } from "../un-pawn";
 import getNativeEffect from "./native-effects";
+import { shiningArrow } from "./native/s-u003";
 import { getNativeEffectBinding, type NativeEffectBinding_T } from "./native-effect-bindings";
 import createSkillVisualDefinition from "./skill-visual-definition";
 import UConfigLocalization from "../conf-files/un-conf-localization";
@@ -51,6 +52,15 @@ type SkillVisualDecodeOps_T = {
     pullSoundPath: (path: string, required?: boolean) => Promise<string>;
 };
 
+export function applyEffectSkinDefaults(classId: string, properties: Record<string, any>): void {
+    if (classId.toLowerCase() === shiningArrow.effectClass.toLowerCase() && !properties.Skins?.length)
+        properties.Skins = [shiningArrow.skin];
+}
+
+export function getSkillVisualCacheKey(key: string, id: number, castStyle: number): string {
+    return getNativeEffectBinding(id, castStyle)?.effects.includes(shiningArrow.effectClass) ? `${key}:arrow-skin` : key;
+}
+
 export function validatePlayerSkillSource(id: number, level: number, operationType: number): void {
     if (operationType !== 0 && operationType !== 1 && operationType !== 3) throw new Error(`Player skill '${id}:${level}' operation type '${operationType}' is not supported.`);
 }
@@ -97,8 +107,7 @@ export async function decodeSkillVisuals(library: DecodeLibrary, attacks: readon
 
         // Engine.dll SetMagicInfo 0x79b45e; MagicProcess 0x7b4f65 branches on the resolved object.
         const soulshot = visual ? null : await getSoulShotEffects(attack.id);
-        const binding: NativeEffectBinding_T = visual ? null : soulshot ? { effects: [], soundPhases: ["casting"] as NpcSkillEffectPhase_T[] } : getNativeEffectBinding(attack.id);
-        const native = attack.castStyle === 0 && binding?.transient ? binding.transient : binding;
+        const native: NativeEffectBinding_T = visual ? null : soulshot ? { effects: [], soundPhases: ["casting"] } : getNativeEffectBinding(attack.id, attack.castStyle);
 
         if (!visual && !native)
             throw new Error(`Skill '${attack.id}:${attack.level}' (${attack.name}) has no resolved visual or implemented native recipe.`);

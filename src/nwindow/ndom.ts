@@ -1,8 +1,8 @@
-import { getCanvasImageUrl, prepareCanvasImageUrls } from "./ui-image";
-import NCTooltip, { type TooltipInfo_T } from "./nc-tooltip";
+import NCTooltip, { type TooltipSource_T } from "./nc-tooltip";
 import { DIGIT_CELLS, DIGIT_FONTS, DigitFont_T, FontType_T } from "./nwindow-canvas";
 import type NWindowManager from "./nwindow-manager";
 import { SKIN_SLOTS } from "./skin-textures";
+import { supportsBitmap } from "../browser";
 
 const CARET_BLINK = 500;
 const TEXT_COLOR = 0xffdcdcdc;
@@ -15,13 +15,36 @@ type AtlasFrame_T = { url: string, x: number, y: number, atlasWidth: number, atl
 type AtlasEntry_T = AtlasFrame_T & { width: number, height: number, frames: AtlasFrame_T[], frameTime: number };
 type ModalWindow_T = { element: HTMLElement };
 
+function encodeBitmap(canvas: HTMLCanvasElement): Blob { // 32bpp BITMAPV4 with RGBA bitfields: raw canvas bytes, no PNG compression pass.
+    const pixels = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data;
+    const header = new DataView(new ArrayBuffer(122));
+
+    header.setUint16(0, 0x4d42, true);
+    header.setUint32(2, 122 + pixels.byteLength, true);
+    header.setUint32(10, 122, true);
+    header.setUint32(14, 108, true);
+    header.setInt32(18, canvas.width, true);
+    header.setInt32(22, -canvas.height, true);
+    header.setUint16(26, 1, true);
+    header.setUint16(28, 32, true);
+    header.setUint32(30, 3, true);
+    header.setUint32(34, pixels.byteLength, true);
+    header.setUint32(54, 0x000000ff, true);
+    header.setUint32(58, 0x0000ff00, true);
+    header.setUint32(62, 0x00ff0000, true);
+    header.setUint32(66, 0xff000000, true);
+    header.setUint32(70, 0x73524742, true);
+
+    return new Blob([header.buffer, pixels], { type: "image/bmp" });
+}
+
 function selectionHtml(x: number, width: number) { return `<b style="left:${x}px;top:2px;width:${width}px;height:12px"></b>`; } // NWindow.WhiteTexture at alpha 0x80.
 
 function glyphHtml(x: number, y: number, w: number, h: number, u: number, v: number) { return `<i style="left:${x}px;top:${y}px;width:${w}px;height:${h}px;background-position:${-u}px ${-v}px"></i>`; }
 
 export type NDomCheckBox_T = HTMLDivElement & { setChecked(checked: boolean): void, getChecked(): boolean };
 export type NDomButton_T = HTMLDivElement & { setLabel(label: string): void, setEnabled(isEnabled: boolean): void, setTextures(normal: string, down: string, over?: string): void };
-export type NDomScrollPane_T = HTMLDivElement & { content: HTMLDivElement, setContentHeight(height: number, preserveScroll?: boolean): void, setScroll(position: number, isClamped?: boolean): void, getScroll(): number };
+export type NDomScrollPane_T = HTMLDivElement & { content: HTMLDivElement, setContentHeight(height: number, preserveScroll?: boolean): void, setHeight(height: number): void, setScroll(position: number, isClamped?: boolean): void, getScroll(): number };
 export type NDomEdit_T = HTMLDivElement & { input: HTMLInputElement, getValue(): string, setValue(value: string): void, appendValue(value: string): void, setEnabled(isEnabled: boolean): void, setWidthLimit(width: number): void, focus(): void };
 
 export class NDomLayer {
@@ -105,6 +128,7 @@ export class NDomLayer {
     }
 
     public getManager() { return this.manager; }
+    public getActiveWindow() { return this.activeWindow; }
     public getModalWindows() { return this.arrModalWindows.map(entry => entry.element); }
     public getWindows() { return [...this.consoleRoot.children, ...this.root.children].filter(wnd => wnd !== this.consoleRoot) as HTMLElement[]; }
 
@@ -307,7 +331,7 @@ export class NDomLayer {
     public async loadTextures(paths: string[], tinted: [string, number][] = [], useIntrinsicAlpha = true, atlasWidth = ATLAS_WIDTH) { // tinted copies share atlas pages of the same call
         const canvas = this.manager.canvas;
 
-        await Promise.all([canvas.loadTextures([...paths, ...tinted.map(([path]) => path)], useIntrinsicAlpha), prepareCanvasImageUrls()]);
+        await canvas.loadTextures([...paths, ...tinted.map(([path]) => path)], useIntrinsicAlpha);
 
         const requests = [...new Map<string, [string, number]>([...paths.map(path => [path, 0xffffff] as [string, number]), ...tinted].map(([path, tint]) => {
             const key = path.replace(/^\?/, "").toLowerCase();
@@ -356,7 +380,7 @@ export class NDomLayer {
 
             page.forEach(i => context.drawImage(images[i], places[i][0], places[i][1]));
 
-            const url = getCanvasImageUrl(atlas);
+            const url = supportsBitmap ? URL.createObjectURL(encodeBitmap(atlas)) : atlas.toDataURL("image/png");
 
             page.forEach(i => frames[i] = { url, x: places[i][0], y: places[i][1], atlasWidth: atlas.width, atlasHeight: atlas.height });
             atlas.width = atlas.height = 0;
@@ -465,7 +489,11 @@ export class NDomLayer {
     public getTintUrl(path: string, color: number, alphaRef: number = -1, useIntrinsicAlpha = true): string {
         const key = `${this.manager.canvas.getTextureKey(path, useIntrinsicAlpha)}:${color & 0xffffff}:${alphaRef}`;
 
-        if (!this.cacheTintUrls.has(key)) this.cacheTintUrls.set(key, getCanvasImageUrl(this.manager.canvas.getTintedImage(path, color, alphaRef, useIntrinsicAlpha)));
+        if (!this.cacheTintUrls.has(key)) {
+            const canvas = this.manager.canvas.getTintedImage(path, color, alphaRef, useIntrinsicAlpha);
+
+            this.cacheTintUrls.set(key, supportsBitmap ? URL.createObjectURL(encodeBitmap(canvas)) : canvas.toDataURL("image/png"));
+        }
 
         return this.cacheTintUrls.get(key);
     }
@@ -623,9 +651,9 @@ export class NDomLayer {
         return element;
     }
 
-    public tooltip(parent: HTMLElement, button: HTMLElement, info: string | TooltipInfo_T, topOffset = 32) { this.tooltips.bind(this, parent, button, info, topOffset); }
+    public tooltip(parent: HTMLElement, button: HTMLElement, info: TooltipSource_T, topOffset = 32) { this.tooltips.bind(this, parent, button, info, topOffset); }
 
-    public tab(parent: HTMLElement, x: number, y: number, w: number, h: number, normal: string, selected: string, label: string, tooltip: string, onSelect: () => void): NDomButton_T { // NCTabButton 0x10001b90, 0x10001a50: selected stays state 1; unselected hover uses state 2.
+    public tab(parent: HTMLElement, x: number, y: number, w: number, h: number, normal: string, selected: string, label: string, tooltip: string | (() => string), onSelect: () => void, textureWidth = w): NDomButton_T { // NCTabButton 0x10001b90, 0x10001a50: selected stays state 1; unselected hover uses state 2.
         let isEnabled = true, isSelected = normal === selected;
         const select = () => { // 0x10002a50 / 0x1002e550.
             if (!isEnabled) return;
@@ -645,7 +673,8 @@ export class NDomLayer {
             label ? normal === selected || !this.hasTexture(`${normal}_over`) ? normal : `${normal}_over` : selected,
             label,
             null,
-            isDown => { if (isDown) select(); }
+            isDown => { if (isDown) select(); },
+            textureWidth
         );
         const setTextures = tab.setTextures, setEnabled = tab.setEnabled;
 
@@ -656,7 +685,7 @@ export class NDomLayer {
         tab.setEnabled = value => { isEnabled = value; setEnabled(value); };
         tab.tabIndex = 0;
         tab.setAttribute("role", "tab");
-        tab.setAttribute("aria-label", tooltip || label);
+        tab.setAttribute("aria-label", typeof tooltip === "function" ? tooltip() : tooltip || label);
         tab.addEventListener("mousedown", event => { if (event.button === 0) event.preventDefault(); });
         if (tooltip) this.tooltip(parent, tab, tooltip);
         tab.addEventListener("keydown", event => {
@@ -698,7 +727,7 @@ export class NDomLayer {
         const thumb = this.createWindow(w - 15, 15, 15, 0, element);
         const thumbCenter = this.tile(thumb, 0, 8, 15, 8, 0, 0, 15, 8, SKIN_SLOTS.scrollThumbCenter);
         const thumbBottom = this.tile(thumb, 0, 8, 15, 8, 0, 0, 15, 8, SKIN_SLOTS.scrollThumbBottom);
-        const viewRows = visibleRows;
+        let viewRows = visibleRows;
         let scroll = 0, contentHeight = 0, thumbLen = 0;
 
         const update = () => {
@@ -752,7 +781,9 @@ export class NDomLayer {
         };
 
         pushButton(this.button(element, w - 15, 0, 15, 15, SKIN_SLOTS.scrollUp, SKIN_SLOTS.scrollUpDown, SKIN_SLOTS.scrollUp), -1);
-        pushButton(this.button(element, w - 15, h - 15, 15, 15, SKIN_SLOTS.scrollDown, SKIN_SLOTS.scrollDownDown, SKIN_SLOTS.scrollDown), 1);
+        const downButton = this.button(element, w - 15, h - 15, 15, 15, SKIN_SLOTS.scrollDown, SKIN_SLOTS.scrollDownDown, SKIN_SLOTS.scrollDown);
+
+        pushButton(downButton, 1);
         this.tile(thumb, 0, 0, 15, 8, 0, 0, 15, 8, SKIN_SLOTS.scrollThumbTop);
         thumb.tabIndex = -1;
         thumb.addEventListener("mousedown", event => {
@@ -778,6 +809,13 @@ export class NDomLayer {
             });
         });
         element.addEventListener("wheel", event => element.setScroll(scroll + Math.sign(event.deltaY) * step));
+        element.setHeight = height => {
+            h = height;
+            viewRows = Math.max(1, Math.ceil(h / step));
+            element.style.height = `${h}px`;
+            this.place(downButton, w - 15, h - 15);
+            element.setScroll(scroll);
+        };
         element.setContentHeight(0);
 
         return element;

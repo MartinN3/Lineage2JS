@@ -1,3 +1,4 @@
+import StaticMeshLod from "../../objects/static-mesh-lod";
 import { createStaticMeshTextureBatchJob } from "./static-mesh-texture-batching";
 import { BufferGeometry, BufferAttribute, DataArrayTexture, DynamicDrawUsage, Mesh, Matrix4, Group, Object3D, Material, MeshBasicMaterial, NormalBlending, Quaternion, Vector3 } from "three";
 import { canonicalizeStaticMeshMaterials, decodeStaticMeshMaterial } from "./material-decoder";
@@ -11,6 +12,8 @@ import { buildStaticMeshBatchData } from "./batch-data";
 import type { DecodeLibrary, IGeometryDecodeInfo, IBaseObjectOrInstanceDecodeInfo } from "@l2js/engine";
 import type { StaticMeshBatchManifest_T, BatchElement_T, IStaticMeshSwayDecodeInfo, IStaticMeshActorDecodeInfo, ILightInstanceDecodeInfo, IStaticMeshInstanceDecodeInfo } from "@l2js/engine/contracts/mesh";
 import type { CollisionTriangleIndex_T } from "../../objects/objects";
+
+const tmpLodMatrix = new Matrix4(), tmpPosition = new Vector3(), tmpQuaternion = new Quaternion(), tmpScale = new Vector3();
 
 type StaticMeshIndexArray_T = Uint8Array | Uint16Array | Uint32Array;
 
@@ -92,7 +95,16 @@ function createBatchObject(
     mergedObject.transparentMaterialIndexes = transparentMats;
     mergedObject.sortedTransparentMaterialIndexes = sortedTransparentMats;
 
-    if (transparentMats.size > 0) {
+    if (actors.some(actor => actor.instance.mesh.lods)) {
+        const groups = batchElements.flatMap(element => element.groups.filter(group => !group.lod && group.count && !transparentMats.has(group.materialIndex)));
+        groups.sort((a, b) => a.start - b.start);
+        mergedGeometry.clearGroups();
+        for (const group of groups) {
+            const last = mergedGeometry.groups[mergedGeometry.groups.length - 1];
+            if (last && last.materialIndex === group.materialIndex && last.start + last.count === group.start) last.count += group.count;
+            else mergedGeometry.addGroup(group.start, group.count, group.materialIndex);
+        }
+    } else if (transparentMats.size > 0) {
         const opaque = mergedGeometry.groups.filter(g => !transparentMats.has(g.materialIndex));
 
         mergedGeometry.clearGroups();
@@ -167,7 +179,7 @@ export function decodeStaticMeshInstance(
 
     const infoMats = library.materials[meshInfo.materials];
 
-    const materials = decodeStaticMeshMaterial(library, infoMats, !!infoGeo.attributes.colors, !!info.attributes.colors, !!sway) || (new MeshBasicMaterial({ color: 0xff00ff }) as Material);
+    const materials = decodeStaticMeshMaterial(library, infoMats, !!infoGeo.attributes.colors, !!info.attributes.colors, !!sway, false, !!info.mesh.lods) || (new MeshBasicMaterial({ color: 0xff00ff }) as Material);
 
     const collider = infoGeo.colliderIndices || null;
     const lights = decodeStaticMeshActorLight(library, info.lights);
@@ -182,8 +194,7 @@ export function createStaticMeshBatchJob(
     fetchGeometry: (info: IGeometryDecodeInfo) => BufferGeometry,
     decodeObject3D: (library: DecodeLibrary, info: IBaseObjectOrInstanceDecodeInfo) => Object3D
 ): StaticMeshBatchJob_T {
-    const manifest: StaticMeshBatchManifest_T = (library as any).staticMeshBatches ?? buildStaticMeshBatchData(library);
-
+    const manifest: StaticMeshBatchManifest_T = library.staticMeshBatches ?? buildStaticMeshBatchData(library);
     return { library, sector, staticMeshGroup, fetchGeometry, decodeObject3D, manifest, batchIndex: 0, actorIndex: 0, batchBuild: null, prepareBounds: null, boundsBuild: null };
 }
 
@@ -195,7 +206,7 @@ function* buildStaticMeshBatch(job: StaticMeshBatchJob_T, batch: StaticMeshBatch
         yield;
         const geometryInfo = library.geometries[batch.geometry];
         const materialInfo = library.materials[batch.materials];
-        const materials = decodeStaticMeshMaterial(library, materialInfo, !!geometryInfo.attributes.colors, !!geometryInfo.attributes.colorsInstance, !!geometryInfo.attributes.sway)
+        const materials = decodeStaticMeshMaterial(library, materialInfo, !!geometryInfo.attributes.colors, !!geometryInfo.attributes.colorsInstance, !!geometryInfo.attributes.sway, false, batch.actors.some(actor => !!actor.instance.mesh.lods))
             || (new MeshBasicMaterial({ color: 0xff00ff }) as Material);
         yield;
         // The merged light matrix has always been identity (see mergeBatchGeometriesData)
@@ -203,6 +214,14 @@ function* buildStaticMeshBatch(job: StaticMeshBatchJob_T, batch: StaticMeshBatch
             ? { matrix: new Matrix4(), scene: batch.lights.scene, environment: batch.lights.environment, staticLighting: batch.staticLighting }
             : null;
 
+        if (library.projectors?.length) batch.batchElements.forEach((element, i) => {
+            const actor = batch.actors[i], properties = actor.scriptProperties, defaults = actor.sharedScriptProperties;
+            element.projector = {
+                accepts: !!(properties?.bAcceptsProjectors ?? defaults?.bAcceptsProjectors),
+                tag: String(properties?.Tag ?? defaults?.Tag),
+                isUnlit: !!actor.ambient?.isUnlit
+            };
+        });
         const batchObject = createBatchObject(
             batch.name,
             geometry,
@@ -216,6 +235,13 @@ function* buildStaticMeshBatch(job: StaticMeshBatchJob_T, batch: StaticMeshBatch
         );
 
         yield;
+        for (let i = 0; i < batch.actors.length; i++) {
+            const actor = batch.actors[i];
+            if (!actor.instance.mesh.lods) continue;
+            tmpLodMatrix.compose(tmpPosition.fromArray(actor.position), tmpQuaternion.fromArray(actor.quaternion), tmpScale.fromArray(actor.scale));
+            if (!batchObject.batchLods) batchObject.batchLods = [];
+            batchObject.batchLods[i] = new StaticMeshLod(geometry, actor, batch.perActorAmbient[i].startVertex, library.geometries[actor.instance.mesh.geometry].attributes.positions, tmpLodMatrix);
+        }
         const source = geometry.index?.array as StaticMeshIndexArray_T;
         yield* batchObject.setCollisionActors(batch.actorColliders, batch.actorColliderIndices);
         yield;
@@ -281,6 +307,7 @@ export function stepStaticMeshBatchJob(job: StaticMeshBatchJob_T): boolean {
         job.boundsBuild = null;
     }
 
+    sector.invalidateVisibility();
     sector.add(staticMeshGroup);
     (sector as any).staticMeshGroup = staticMeshGroup;
     staticMeshGroup.updateMatrixWorld(true);

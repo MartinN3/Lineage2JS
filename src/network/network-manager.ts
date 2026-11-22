@@ -364,6 +364,8 @@ export class NetworkManager implements IEngineComponent<GameManager> {
     public cancelTarget() { this.session.game.requestTargetCanceld(); }
 
     public requestMoveTo(point: Vector3, actor: ICollidable = null) {
+        if (this.actors.missingSector) return;
+
         const player = this.manGame.getComponent("render").player;
 
         if (actor && (actor as Vehicle).isVehicle) {
@@ -544,6 +546,7 @@ export class NetworkManager implements IEngineComponent<GameManager> {
         this.manGame.getComponent("input").resetInput();
         this.session.stopReplayRecording();
         this.actors.worldLoad = null;
+        this.actors.userAppearanceLoad = null;
         this.actors.clearDisappearNpcActions();
         for (const objectId of this.movement.riders.keys()) this.movement.endRide(objectId);
         const lifecycle = render.player.findComponent<NpcLifecycleComponent>("npcLifecycle");
@@ -746,6 +749,7 @@ export class NetworkManager implements IEngineComponent<GameManager> {
         this.items.manorProcureCropDetail = null;
         this.ui.hideWorld();
         this.actors.inWorld = false;
+        this.actors.missingSector = null;
         this.actors.teleportGeneration++;
         this.actors.teleportInfoPending = false;
         this.actors.userId = 0;

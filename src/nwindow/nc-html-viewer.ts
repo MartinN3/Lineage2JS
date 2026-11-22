@@ -469,6 +469,7 @@ export class NCHtmlViewer { // NCHtmlViewer (vtable 0x101a8a18) on NCScrollWnd: 
         this.element = layer.createWindow(x, y, width, height, parent);
         this.element.style.overflow = "hidden";
         this.content = layer.createWindow(0, 0, width - SCROLLBAR_RESERVE, null, this.element);
+        this.content.classList.add("ndom-selectable");
 
         this.scrollBar = layer.createWindow(width - 15, 0, 15, height, this.element);
         this.pushButton(layer.button(this.scrollBar, 0, 0, 15, 15, TEX_UP, TEX_UP_ON, TEX_UP), -1);
@@ -977,7 +978,7 @@ export class NCHtmlViewer { // NCHtmlViewer (vtable 0x101a8a18) on NCScrollWnd: 
             for (const [top, line] of lines) {
                 if (top === lastLine || line.spaces.length === 0) continue;
 
-                const extra = Math.max(0, Math.round((bounds.right - line.end) / scale));
+                const extra = Math.max(0, Math.floor((bounds.right - line.end) / scale + 0.01));
                 const advance = Math.floor(extra / line.spaces.length), remainder = extra % line.spaces.length;
 
                 for (let i = 0; i < line.spaces.length; i++)

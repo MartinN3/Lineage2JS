@@ -2,7 +2,8 @@ import { loginExitUrl } from "../build-settings";
 import { setLoadingProgress, hideLoadingProgress, loadingTexts } from "../loading-progress";
 import * as GamePackets from "../network/game-packets";
 import { EDrawType_T } from "../assets/unreal/un-aactor";
-import type { AudioConfig_T, GameConfig_T } from "../assets/unreal/conf-files/un-conf-system";
+import type { AudioConfig_T, GameOptions_T } from "../assets/unreal/conf-files/un-conf-system";
+import { WINDOW_ACTIONS, getDefaultWindowKeyBindings, getWindowKeyChord, validateWindowKeyBindings } from "../game/window-key-bindings";
 import { Vector3 } from "three";
 import { GAMMA_STEPS } from "../rendering/display-gamma";
 import NWindowManager from "./nwindow-manager";
@@ -125,7 +126,7 @@ export class NConsoleWnd implements IEngineComponent<GameManager> {
     protected abnormalStatusWnd: AbnormalStatusWndView_T = null;
     protected targetStatusWnd: TargetStatusWndView_T = null;
     protected restartMenuWnd: RestartMenuWndView_T = null;
-    protected readonly skillCoolTimes = new Map<string, NCCoolTimeIcon>();
+    protected readonly skillCoolTimes = new Map<number, NCCoolTimeIcon>();
     protected shortCutWnd: ShortCutWndView_T = null;
     protected chatWnd: ChatWndView_T = null;
     protected chatFilterWnd: ChatFilterWndView_T = null;
@@ -165,7 +166,7 @@ export class NConsoleWnd implements IEngineComponent<GameManager> {
     protected heroTowerWnd: HeroTowerWndView_T = null;
     protected commandInfoWnd: CommandInfoWndView_T = null;
     protected trainWnd: TrainWndView_T = null;
-    protected options: AssetManager["userConfig"] & { audio: AudioConfig_T };
+    protected options: AssetManager["userConfig"] & { audio: AudioConfig_T; game: GameOptions_T };
     protected privateShopWnd: PrivateShopWndView_T = null;
     protected privateBuyWnd: PrivateBuyWndView_T = null;
     protected vipShopWnd: VIPShopWndView_T = null;
@@ -231,7 +232,53 @@ export class NConsoleWnd implements IEngineComponent<GameManager> {
 
     protected manRender: RenderManager;
 
-    public constructor(protected readonly skin: Skin = new Skin()) { }
+    public constructor(protected readonly skin: Skin = new Skin()) {
+        for (const type of ["keydown", "keyup"])
+            window.addEventListener(type, (event: KeyboardEvent) => {
+                if (!this.optionWnd || !this.optionWnd.captureKeyEvent(event)) return;
+
+                event.preventDefault();
+                event.stopImmediatePropagation();
+            }, true);
+        window.addEventListener("keydown", event => this.onWindowKeyDown(event), true);
+        window.addEventListener("blur", () => { if (this.optionWnd) this.optionWnd.cancelKeyCapture(); });
+    }
+
+    protected onWindowKeyDown(event: KeyboardEvent) {
+        if (this.screen !== "world" || event.defaultPrevented || event.isComposing || event.metaKey) return;
+
+        const target = event.target as HTMLElement;
+
+        if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable) return;
+        if (this.layer.getModalWindows().length || this.optionWnd.element.contains(target)) return;
+
+        const chord = getWindowKeyChord(event), bindings = this.options.game.windowKeyBindings;
+        const action = WINDOW_ACTIONS.find(action => bindings[action.id] === chord);
+
+        if (!action) return;
+        if ((action.id === "gm" || action.id === "gmPetitions") && (this.windowGroup !== 0 || !this.statusInfo || !(this.statusInfo.gmLevel > 0 && this.statusInfo.gmLevel < 7))) return;
+
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (event.repeat) return;
+
+        switch (action.id) {
+            case "character": this.toggleCharacterStatus(); break;
+            case "status": this.toggleSkillTab("status"); break;
+            case "skills": this.toggleSkills(); break;
+            case "actions": this.toggleSkillTab("actions"); break;
+            case "quest": this.toggleSkillTab("quest"); break;
+            case "clan": this.toggleSkillTab("clan"); break;
+            case "inventory": this.toggleInventory(); break;
+            case "map": this.toggleMap(); break;
+            case "systemMenu": this.toggleSystemMenu(); break;
+            case "community": this.communityWnd.toggle(); break;
+            case "macro": this.macroWnd.setVisible(!this.macroWnd.isVisible()); break;
+            case "gm": this.gmWnd.toggle(); break;
+            case "gmPetitions": this.gmPetitionWnd.setVisible(true); this.gmPetitionWnd.focus(); break;
+            default: throw new Error(`Unknown window action '${action.id}'.`);
+        }
+    }
 
     public setParent(parent: GameManager): this { this.manGame = parent; return this; }
     public getParent(): GameManager { return this.manGame; }
@@ -249,7 +296,7 @@ export class NConsoleWnd implements IEngineComponent<GameManager> {
         const render = this.manGame.getComponent("render");
 
         this.manNetwork = network;
-        this.options = { ...asset.userConfig, game: { ...asset.userConfig.game }, audio: { ...asset.userConfig.audio, backgroundAudio: "notices" }, display: { ...asset.userConfig.display } };
+        this.options = { ...asset.userConfig, game: { ...asset.userConfig.game, invertMouseWheel: false, forceAttackKey: "ctrl", windowKeyBindings: getDefaultWindowKeyBindings() }, audio: { ...asset.userConfig.audio, backgroundAudio: "notices" }, display: { ...asset.userConfig.display } };
         this.manRender = render;
         this.nwindow = new NWindowManager(asset, this.skin.textures);
         this.layer = new NDomLayer(this.nwindow);
@@ -258,8 +305,10 @@ export class NConsoleWnd implements IEngineComponent<GameManager> {
         this.strings = this.nwindow.strings;
         for (const type of ["keydown", "keyup", "mousedown", "mouseup", "mousemove"])
             window.addEventListener(type, (event: KeyboardEvent | MouseEvent) => {
-                this.inputCtrl = event.ctrlKey;
-                this.inputShift = event.shiftKey;
+                const forceKey = this.options.game.forceAttackKey;
+
+                this.inputCtrl = forceKey === "alt" ? event.altKey : forceKey === "shift" ? event.shiftKey : event.ctrlKey;
+                this.inputShift = forceKey === "shift" ? event.ctrlKey : event.shiftKey;
                 if (type === "mousedown" && (event as MouseEvent).button === 0) network.resetMacros();
                 if (type === "keydown" && !event.altKey && this.screen === "world" && this.chatWnd.isInputFocused()) {
                     const key = (event as KeyboardEvent).key;
@@ -294,6 +343,7 @@ export class NConsoleWnd implements IEngineComponent<GameManager> {
         }, true);
         window.addEventListener("keydown", event => { // UL2Console 0x100760e7..0x10076126.
             if (event.isComposing || event.key !== "Escape" || this.screen !== "world") return;
+            if ((event.target as HTMLElement).closest(".ndom-item-search")) return;
             if (asset.playerController.scriptProperties.get("bCameraWalking")) return;
 
             event.preventDefault();
@@ -328,14 +378,6 @@ export class NConsoleWnd implements IEngineComponent<GameManager> {
             event.stopPropagation();
             this.chatWnd.focusInput();
         }, true);
-        window.addEventListener("keydown", event => {
-            if (this.screen !== "world" || this.windowGroup !== 0 || !event.altKey || !["KeyG", "KeyO"].includes(event.code) || !this.statusInfo || !(this.statusInfo.gmLevel > 0 && this.statusInfo.gmLevel < 7)) return;
-
-            event.preventDefault();
-            event.stopPropagation();
-            if (event.code === "KeyG") this.gmWnd.toggle();
-            else { this.gmPetitionWnd.setVisible(true); this.gmPetitionWnd.focus(); }
-        }, true);
         window.addEventListener("resize", () => this.placeScreens());
         window.addEventListener("dragover", event => this.onSkillDrop(event));
         window.addEventListener("drop", event => this.onSkillDrop(event));
@@ -347,24 +389,6 @@ export class NConsoleWnd implements IEngineComponent<GameManager> {
             this.inputCtrl = this.inputShift = false;
             this.endSkillPointerDrag();
         });
-        window.addEventListener("keydown", event => {
-            const target = event.target as HTMLElement;
-
-            if (this.screen !== "world" || !event.altKey || !["KeyI", "KeyT", "KeyK", "KeyC", "KeyU", "KeyN", "KeyV", "KeyM", "KeyX"].includes(event.code) || event.repeat || target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
-
-            event.preventDefault();
-            switch (event.code) {
-                case "KeyI": this.toggleCharacterStatus(); break;
-                case "KeyT": this.toggleSkillTab("status"); break;
-                case "KeyK": this.toggleSkills(); break;
-                case "KeyC": this.toggleSkillTab("actions"); break;
-                case "KeyU": this.toggleSkillTab("quest"); break;
-                case "KeyN": this.toggleSkillTab("clan"); break;
-                case "KeyV": this.toggleInventory(); break;
-                case "KeyM": this.toggleMap(); break;
-                case "KeyX": this.toggleSystemMenu(); break;
-            }
-        }, true);
         this.loadOptions();
     }
 
@@ -623,7 +647,7 @@ export class NConsoleWnd implements IEngineComponent<GameManager> {
         }
         this.targetStatusWnd.onClose = () => network.cancelTarget();
         this.restartMenuWnd.onRestart = type => network.requestRestartPoint(type);
-        this.shortCutWnd.onUse = (page, slot, ctrl, shift) => network.useShortCut(page, slot, ctrl, shift);
+        this.shortCutWnd.onUse = (page, slot) => network.useShortCut(page, slot, this.inputCtrl, this.inputShift);
         this.shortCutWnd.onMove = (page, slot, targetPage, targetSlot) => network.moveShortCut(page, slot, targetPage, targetSlot);
         this.shortCutWnd.onDelete = (page, slot) => network.deleteShortCut(page, slot);
         this.shortCutWnd.onDrop = (page, slot, x, y) => this.macroWnd.dropCommand(`/${this.getStrings().commands[27]} ${page + 1} ${slot + 1}`, x * this.nwindow.canvas.cssScale, y * this.nwindow.canvas.cssScale);
@@ -633,7 +657,7 @@ export class NConsoleWnd implements IEngineComponent<GameManager> {
             document.documentElement.classList.toggle("ndom-item-drag", !!entry);
         };
         this.shortCutWnd.onAutoSoulShot = (page, slot) => network.toggleAutoSoulShot(page, slot);
-        this.playerStatusWnd.onClick = shift => network.requestAction(render.player, shift);
+        this.playerStatusWnd.onClick = () => network.requestAction(render.player, this.inputShift);
         this.chatWnd.onSend = (text, type, target) => network.say(text, type, target);
         this.chatWnd.onBuildCommand = command => network.sendBypassBuildCmd(command);
         this.chatWnd.onCommand = (command, isShift) => network.execCommand(command, isShift);
@@ -732,9 +756,9 @@ export class NConsoleWnd implements IEngineComponent<GameManager> {
         this.inventoryWnd = this.skin.createInventoryWnd(this.layer);
         this.petWnd = this.skin.createPetWnd(this.layer, this.inventoryWnd);
         this.summonedWnd = this.skin.createSummonedWnd(this.layer, this.inventoryWnd);
-        this.summonedWnd.onAction = (id, ctrl, shift) => network.useAction(id, ctrl, shift);
+        this.summonedWnd.onAction = id => network.useAction(id, this.inputCtrl, this.inputShift);
         this.petWnd.onUseItem = objectId => network.usePetItem(objectId);
-        this.petWnd.onAction = (id, ctrl, shift) => network.useAction(id, ctrl, shift);
+        this.petWnd.onAction = id => network.useAction(id, this.inputCtrl, this.inputShift);
         this.petWnd.onGetItem = item => this.transferPetItem(item, false);
         this.petWnd.onRename = () => this.renamePet();
         this.petWnd.onHideBag = owner => {
@@ -1265,8 +1289,8 @@ export class NConsoleWnd implements IEngineComponent<GameManager> {
         };
         this.skillWnd = this.mainWnd.skillWnd;
         this.skillWnd.onShow = () => network.requestSkillList();
-        this.skillWnd.onUse = (id, ctrl, shift) => network.useSkill(id, ctrl, shift);
-        this.mainWnd.actionWnd.onUse = (id, ctrl, shift) => network.useAction(id, ctrl, shift);
+        this.skillWnd.onUse = id => network.useSkill(id, this.inputCtrl, this.inputShift);
+        this.mainWnd.actionWnd.onUse = id => network.useAction(id, this.inputCtrl, this.inputShift);
         void this.mainWnd.actionWnd.setActions(this.strings);
         void this.mainWnd.questWnd.setStrings(this.strings);
         void this.petWnd.setActions(this.strings);
@@ -1319,6 +1343,7 @@ export class NConsoleWnd implements IEngineComponent<GameManager> {
         this.optionWnd.getPawnRange = () => this.manRender.getPawnRange();
         this.optionWnd.onApplyPawnRange = range => this.setPawnRange(range);
         this.optionWnd.canChangePartyLoot = () => !network.isInParty() && !this.partyRoomWnd.isVisible();
+        this.optionWnd.canUseGMControls = () => this.screen === "world" && !!this.statusInfo && this.statusInfo.gmLevel > 0 && this.statusInfo.gmLevel < 7;
         this.optionWnd.getAntiAliasingLevels = () => this.manRender.getAntiAliasingLevels();
         this.optionWnd.getUIScale = () => this.nwindow.canvas.uiScale;
         this.optionWnd.getUIScales = () => UI_SCALES.filter(scale => {
@@ -1333,7 +1358,7 @@ export class NConsoleWnd implements IEngineComponent<GameManager> {
             this.chatWnd.resetLayout();
             this.nwindow.resetWindowPositions();
             this.layer.resetWindowPositions();
-            this.placeScreens();
+            this.placeScreens(true);
         };
         this.gmPetitionWnd = this.skin.createGMPetitionWnd(this.layer);
         this.gmPetitionWnd.onSay = text => {
@@ -1393,19 +1418,21 @@ export class NConsoleWnd implements IEngineComponent<GameManager> {
 
     protected getSavedWindows(): [string, HTMLElement][] { return [["DebugStatsWnd", this.manNetwork.getParent().getComponent("ui").getStatsWindow()], ["InventoryWnd", this.inventoryWnd.element], ["MainWnd", this.mainWnd.element], ["MenuWnd", this.menuWnd.element], ["SystemMenuWnd", this.systemMenuWnd.element], ["OptionWnd", this.optionWnd.element], ["MapWnd", this.mapWnd.element], ["TownMapWnd", this.townMapWnd.element], ["MacroWnd", this.macroWnd.element], ["CommunityWnd", this.communityWnd.element], ["PetWnd", this.petWnd.element], ["SummonedWnd", this.summonedWnd.element], ["PledgePowerWnd", this.pledgePowerWnd.element], ["NPCHtmlViewer", this.npcHtmlViewer.element], ["NPCItemHtmlViewer", this.npcItemHtmlViewer.element], ["HelpHtmlViewer", this.helpWnd.element], ["TradeWnd", this.tradeWnd.element], ["ShopWnd", this.shopWnd.element], ["PreviewShopWnd", this.previewShopWnd.element], ["ManorShopWnd", this.manorShopWnd.element], ["StoreWnd", this.storeWnd.element], ["DeliverWnd", this.deliverWnd.element], ["SelectDeliverWnd", this.selectDeliverWnd.element], ["PrivateShopWnd", this.privateShopWnd.element], ["PrivateBuyWnd", this.privateBuyWnd.element], ["VIPShopWnd", this.vipShopWnd.element], ["RecipeBookWnd", this.recipeBookWnd.element], ["RecipeManufactureWnd", this.recipeManufactureWnd.element], ["RecipeBuyManufactureWnd", this.recipeBuyManufactureWnd.element], ["RecipeTreeWnd", this.recipeTreeWnd.element], ["RecipeShopWnd", this.recipeShopWnd.element], ["RecipeBuyListWnd", this.recipeBuyListWnd.element], ["HennaListWnd", this.hennaListWnd.element], ["HennaInfoWnd", this.hennaInfoWnd.element], ["SSQMainBoard", this.ssqMainBoard.element], ["ItemEnchantWnd", this.itemEnchantWnd.element], ["MatchWnd", this.matchWnd.element], ["PartyRoomWnd", this.partyRoomWnd.element], ["HeroTowerWnd", this.heroTowerWnd.element], ["TrainWnd", this.trainWnd.element], ["FishViewportWnd", this.fishViewportWnd.element], ["CommandInfoWnd", this.commandInfoWnd.element], ["OlympiadControlWnd", this.olympiadControlWnd.element], ["GMWnd", this.gmWnd.element], ["GMMagicSkillWnd", this.gmSkillWnd.element], ["GMInventoryWnd", this.gmInventoryWnd.element], ["GMStoreWnd", this.gmStoreWnd.element], ["GMQuestWnd", this.gmQuestWnd.element], ["GMDetailStatusWnd", this.gmDetailWnd.element], ["GMClanWnd", this.gmClanWnd.element], ["PlayerStatusWnd", this.playerStatusWnd.element], ["PetStatusWnd", this.petStatusWnd.element], ["PartyWnd", this.partyWnd.element], ["CalcWnd", this.calcWnd.element], ["QuestListInfoWnd", this.questListInfoWnd.element], ["SiegeInfoMainWnd", this.siegeInfoWnd.element], ["ManorInfoWnd", this.manorInfoWnd.element], ["ManorSeedInfoSettingWnd", this.manorSeedSettingWnd.element], ["ManorCropInfoSettingWnd", this.manorCropSettingWnd.element], ["ManorCropSellWnd", this.manorCropSellWnd.element], ["ManorCropSellChangeWnd", this.manorCropSellWnd.changeWnd.element], ["XMasSealWnd", this.xmasSealWnd.element], ["SummonedStatusWnd", this.summonedStatusWnd.element], ["AbnormalStatusWnd", this.abnormalStatusWnd.element], ["TargetStatusWnd", this.targetStatusWnd.element], ["ShortCutWnd", this.shortCutWnd.element], ["ChatWnd", this.chatWnd.element], ["OlympiadPlayerWnd1", this.olympiadPlayerWnds[0].element], ["OlympiadPlayerWnd2", this.olympiadPlayerWnds[1].element], ["OlympiadAbnormalWnd1", this.olympiadAbnormalWnds[0].element], ["OlympiadAbnormalWnd2", this.olympiadAbnormalWnds[1].element], ["OlympiadTargetWnd", this.olympiadTargetWnd.element]]; }
 
-    protected placeScreens() {
+    protected placeScreens(isReset: boolean = false) {
         if (!this.loginWnd) return;
 
         const width = this.nwindow.canvas.width, height = this.nwindow.canvas.height;
 
         for (const wnd of this.getDOMWindows()) wnd.placeOnScreen(width, height);
         for (const [name, element] of this.getSavedWindows()) this.layer.restoreWindow(element, name);
+        this.inventoryWnd.placeFoldedOnScreen?.(isReset);
         this.manRender.radar.uiScale = this.nwindow.canvas.cssScale;
     }
 
     protected show(screen: Screen_T) {
         if (screen && screen !== "loading") hideLoadingProgress();
         this.screen = screen;
+        this.optionWnd.updateGMControls();
         this.dialogBox.isInGame = this.yesNoDialogBox.isInGame = screen === "world";
         this.loginWnd.setVisible(screen === "login" || screen === "servers", screen === "login");
         this.loginServerWnd.setVisible(screen === "servers");
@@ -1589,8 +1616,8 @@ export class NConsoleWnd implements IEngineComponent<GameManager> {
         if (this.areHudWindowsAdded) return;
 
         this.areHudWindowsAdded = true;
-        this.petStatusWnd.onTargetAction = this.summonedStatusWnd.onTargetAction = (objectId, shift) => this.manNetwork.requestPetAction(objectId, shift);
-        this.partyWnd.onAction = (objectId, shift, ctrl) => this.manNetwork.requestPartyMemberAction(objectId, shift, ctrl);
+        this.petStatusWnd.onTargetAction = this.summonedStatusWnd.onTargetAction = objectId => this.manNetwork.requestPetAction(objectId, this.inputShift);
+        this.partyWnd.onAction = objectId => this.manNetwork.requestPartyMemberAction(objectId, this.inputShift, this.inputCtrl);
         this.partyWnd.onAssist = objectId => this.manNetwork.requestPartyMemberTarget(objectId);
         void this.nwindow.canvas.loadTextures([TEX_TARGET_BRACKET, TEX_MOUSE_TARGET_BRACKET, ...arrGaugeTextures, ...arrGaugeBack, ...arrBalloonTextures]);
     }
@@ -2115,13 +2142,11 @@ export class NConsoleWnd implements IEngineComponent<GameManager> {
         this.abnormalStatusWnd.setShortEffect(skill && skill.name && skill.name.charCodeAt(0) !== 0 ? effect : null);
     }
 
-    public setSkillCoolTime(id: number, level: number, duration: number, remaining: number) {
+    public setSkillCoolTime(id: number, duration: number, remaining: number) { // retail keys by id and level and loses the cool time when the skill is upgraded, servers keep it.
         if (duration < 0 || remaining < 0 || remaining > duration) throw new Error(`Invalid skill reuse time ${duration}/${remaining}.`);
 
-        const key = `${id}:${level}`;
-
-        if (remaining === 0) this.skillCoolTimes.delete(key);
-        else this.skillCoolTimes.set(key, new NCCoolTimeIcon(duration, remaining, this.manNetwork.getParent().getCurrentTime()));
+        if (remaining === 0) this.skillCoolTimes.delete(id);
+        else this.skillCoolTimes.set(id, new NCCoolTimeIcon(duration, remaining, this.manNetwork.getParent().getCurrentTime()));
     }
 
     public render() {
@@ -2140,6 +2165,8 @@ export class NConsoleWnd implements IEngineComponent<GameManager> {
         if (this.mapWnd && this.mapWnd.isVisible()) {
             const position = this.manRender.player.position;
 
+            if (this.manNetwork.community.partyMembers.size)
+                this.setMapPartyMembers(this.manNetwork.community.partyMembers, this.manNetwork.community.partyPositions, this.manNetwork.actors.userId);
             this.mapWnd.setPosition(position.x, position.y, false, position.z);
             this.manRender.camera.getWorldDirection(tmpMapDirection);
             this.mapWnd.setFacing(Math.atan2(tmpMapDirection.y, tmpMapDirection.x));
@@ -2150,6 +2177,7 @@ export class NConsoleWnd implements IEngineComponent<GameManager> {
 
     public setStatus(info: GamePackets.UserInfo_T) {
         this.statusInfo = info;
+        this.optionWnd.updateGMControls();
         this.trainWnd.setStatus(info);
         this.mainWnd.actionWnd.setClass(info.classId);
         this.playerStatusWnd.setStatus(info);
@@ -2384,7 +2412,8 @@ export class NConsoleWnd implements IEngineComponent<GameManager> {
         for (const member of members.values()) {
             if (member.objectId === selfId) continue;
 
-            const position = positions.get(member.objectId);
+            const object = this.manNetwork.actors.objects.get(member.objectId);
+            const position = object && object.actor ? object.actor.position : positions.get(member.objectId);
 
             arrMembers.push({ objectId: member.objectId, name: member.name, x: position ? position.x : -1, y: position ? position.y : -1, z: position ? position.z : -1 });
         }
@@ -2622,7 +2651,7 @@ export class NConsoleWnd implements IEngineComponent<GameManager> {
         this.nwindow.setWindowOwner(owner);
         this.zoneTitleWnd.reset();
         this.layer.resetWindowPositions();
-        this.placeScreens();
+        this.placeScreens(true);
         for (const prefix of ["option", "audio", "gamma", "pawnRange"]) {
             if (localStorage.getItem(`${prefix}:*`) !== null) continue;
             const value = localStorage.getItem(`${prefix}:${owner}`);
@@ -2637,6 +2666,7 @@ export class NConsoleWnd implements IEngineComponent<GameManager> {
         const options = game === null ? {} : JSON.parse(game);
 
         delete options.screenshotQuality;
+        if (typeof options.skillEffectLighting === "boolean") options.skillEffectLighting = options.skillEffectLighting ? "all" : "none";
         this.applyGameOptions(options);
         this.applyAudioOptions(audio === null ? {} : JSON.parse(audio));
         this.applyGamma(gamma === null ? 0 : JSON.parse(gamma));
@@ -2664,7 +2694,7 @@ export class NConsoleWnd implements IEngineComponent<GameManager> {
         localStorage.setItem("gamma:*", String(gamma));
     }
 
-    protected applyGameOptions(options: Partial<GameConfig_T>) {
+    protected applyGameOptions(options: Partial<GameOptions_T>) {
         if (!options || typeof options !== "object" || Array.isArray(options)) throw new Error(`Invalid game options.`);
 
         for (const [key, value] of Object.entries(options)) {
@@ -2672,8 +2702,8 @@ export class NConsoleWnd implements IEngineComponent<GameManager> {
                 case "useTrilinear":
                 case "renderDeco":
                 case "pawnShadow":
+                case "staticMeshLod":
                 case "sortTransparent":
-                case "skillEffectLighting":
                 case "useColorCursor":
                 case "autoTrackingPawn":
                 case "arrowMode":
@@ -2684,6 +2714,7 @@ export class NConsoleWnd implements IEngineComponent<GameManager> {
                 case "transparencyMode":
                 case "oldChatting":
                 case "enterChatting":
+                case "invertMouseWheel":
                 case "myName":
                 case "npcName":
                 case "groupName":
@@ -2702,18 +2733,32 @@ export class NConsoleWnd implements IEngineComponent<GameManager> {
                 case "partyLooting":
                     if (!Number.isInteger(value) || (value as number) < 0 || (value as number) > 4) throw new Error(`Invalid game option '${key}'.`);
                     break;
+                case "forceAttackKey":
+                    if (value !== "ctrl" && value !== "alt" && value !== "shift") throw new Error(`Invalid game option '${key}'.`);
+                    break;
+                case "windowKeyBindings":
+                    validateWindowKeyBindings(value as GameOptions_T["windowKeyBindings"]);
+                    break;
+                case "skillEffectLighting":
+                    if (value !== "all" && value !== "pawnOnly" && value !== "none") throw new Error(`Invalid game option '${key}'.`);
+                    break;
                 default: throw new Error(`Unknown game option '${key}'.`);
             }
         }
 
         const asset = this.manNetwork.getParent().getComponent("asset");
 
-        this.options.game = { ...asset.userConfig.game, ...options };
+        this.options.game = { ...asset.userConfig.game, staticMeshLod: asset.userConfig.game.staticMeshLod ?? false, skillEffectLighting: "pawnOnly", invertMouseWheel: false, forceAttackKey: "ctrl", ...options, windowKeyBindings: options.windowKeyBindings === undefined ? getDefaultWindowKeyBindings() : validateWindowKeyBindings(options.windowKeyBindings) };
+        this.nwindow.setWindowKeyBindings(this.options.game.windowKeyBindings);
+        for (const wnd of [this.inventoryWnd, this.menuWnd, this.mainWnd, this.systemMenuWnd])
+            if (wnd) wnd.updateKeyBindings();
         asset.playerController.isEnterChatting = this.options.game.enterChatting;
+        this.manGame.getComponent("input").setInvertMouseWheel(this.options.game.invertMouseWheel);
         this.manRender.setPawnLimit(PAWN_LIMITS[this.options.game.renderActorLimitOpt - 1]);
         this.manRender.setPawnShadow(this.options.game.pawnShadow);
+        this.manRender.setStaticMeshLod(this.options.game.staticMeshLod);
         this.manRender.setSortTransparent(this.options.game.sortTransparent);
-        this.manRender.skillLightProbe.enabled = this.options.game.skillEffectLighting;
+        this.manRender.skillLightProbe.mode = this.options.game.skillEffectLighting;
         this.manRender.setRenderDeco(this.options.game.renderDeco);
         this.manRender.setUseTrilinear(this.options.game.useTrilinear);
         this.manRender.setTextureDetail(this.options.game.textureDetail);
@@ -2743,7 +2788,7 @@ export class NConsoleWnd implements IEngineComponent<GameManager> {
         localStorage.setItem("option:UIScale", String(scale));
     }
 
-    public setGameOptions(options: Partial<GameConfig_T>) {
+    public setGameOptions(options: Partial<GameOptions_T>) {
         this.applyGameOptions(options);
         localStorage.setItem("option:*", JSON.stringify(options));
     }
@@ -2752,7 +2797,7 @@ export class NConsoleWnd implements IEngineComponent<GameManager> {
 
     public isQuestArrowEnabled() { return this.options.game.arrowMode; }
 
-    public getGameOptions() { return { ...this.options.game }; }
+    public getGameOptions() { return { ...this.options.game, windowKeyBindings: { ...this.options.game.windowKeyBindings } }; }
 
     protected applyAudioOptions(options: Partial<AudioConfig_T>) {
         if (!options || typeof options !== "object" || Array.isArray(options)) throw new Error(`Invalid audio options.`);
@@ -3139,7 +3184,7 @@ export class NConsoleWnd implements IEngineComponent<GameManager> {
             case GamePackets.ShortCutType_T.TYPE_SKILL: {
                 const info = NCTooltip.shortcutSkill(strings, shortcut.id, shortcut.level);
 
-                entry = { icon: strings.skillInfos[`${shortcut.id}:${shortcut.level}`]?.icon || strings.skillIcons[shortcut.id], label: info.title, tooltip: info, skillKey: `${shortcut.id}:${shortcut.level}` };
+                entry = { icon: strings.skillInfos[`${shortcut.id}:${shortcut.level}`]?.icon || strings.skillIcons[shortcut.id], label: info.title, tooltip: info, skillKey: `${shortcut.id}:${shortcut.level}`, skillId: shortcut.id };
                 break;
             }
             case GamePackets.ShortCutType_T.TYPE_ACTION: {

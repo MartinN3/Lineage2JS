@@ -7,6 +7,7 @@ export type BatchElementGroup_T = {
     start: number;
     count: number;
     materialIndex: number;
+    lod?: number;
 };
 
 export type BatchElement_T = {
@@ -17,6 +18,7 @@ export type BatchElement_T = {
     zoneMask: bigint;
     isRangeIgnored: boolean;
     leaves: number[] | null; // bsp leaves holding the actor, for per-element pvs culling
+    projector?: { accepts: boolean, tag: string, isUnlit: boolean };
 };
 
 export type BatchLightEntry_T = {

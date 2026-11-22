@@ -120,7 +120,12 @@ export function canonicalizeStaticMeshMaterials(materials: THREE.Material | THRE
     return materials instanceof Array ? canonical : canonical[0];
 }
 
-export function decodeStaticMeshMaterial(library: DecodeLibrary, info: MaterialContracts.IBaseMaterialDecodeInfo, vertexColors: boolean, instanced: boolean, sway: boolean, terrainDecoration: boolean = false): THREE.Material | THREE.Material[] {
+function applyBasicMeshLod(shader: THREE.WebGLProgramParametersWithUniforms) {
+    shader.vertexShader = shader.vertexShader.replace("#include <common>", "#include <common>\n#include <static_mesh_lod_vertex>").replace("#include <begin_vertex>", "#include <begin_vertex>\ntransformed = applyStaticMeshLod(transformed);");
+    shader.fragmentShader = shader.fragmentShader.replace("#include <common>", "#include <common>\n#include <static_mesh_lod_fragment>").replace("#include <clipping_planes_fragment>", "#include <clipping_planes_fragment>\ndiscardStaticMeshLod();");
+}
+
+export function decodeStaticMeshMaterial(library: DecodeLibrary, info: MaterialContracts.IBaseMaterialDecodeInfo, vertexColors: boolean, instanced: boolean, sway: boolean, terrainDecoration: boolean = false, lod: boolean = false): THREE.Material | THREE.Material[] {
     if (!info) return null;
 
     const name = info.name;
@@ -132,7 +137,7 @@ export function decodeStaticMeshMaterial(library: DecodeLibrary, info: MaterialC
         if (name) setWeakCacheValue(cacheStaticMaterialsByName, name, variants);
     }
 
-    const key = (vertexColors ? "v" : "") + (instanced ? "i" : "") + (sway ? "s" : "") + (terrainDecoration ? "d" : "");
+    const key = (vertexColors ? "v" : "") + (instanced ? "i" : "") + (sway ? "s" : "") + (terrainDecoration ? "d" : "") + (lod ? "l" : "");
 
     if (variants.has(key)) return variants.get(key);
 
@@ -141,6 +146,15 @@ export function decodeStaticMeshMaterial(library: DecodeLibrary, info: MaterialC
     (materials instanceof Array ? materials : [materials]).forEach((mat: any) => {
         if (!mat) return;
         if (mat.isStaticMeshMaterial) mat.forceSinglePass = true;
+        if (lod && (mat.isStaticMeshMaterial || mat.isMeshBasicMaterial)) {
+            if (mat.isStaticMeshMaterial) mat.defines.USE_STATIC_MESH_LOD = "";
+            else {
+                mat.defaultAttributeValues = {};
+                mat.onBeforeCompile = applyBasicMeshLod;
+            }
+            mat.defaultAttributeValues.lodFade = [0];
+            mat.defaultAttributeValues.lodBillboard = [0, 0, 0];
+        }
         if (instanced) mat.setInstanced?.();
         if (sway) mat.setSway?.();
         if (terrainDecoration) mat.setTerrainDecoration?.();
@@ -190,6 +204,14 @@ function fetchTexture(library: DecodeLibrary, info: ITextureDecodeInfo): MapData
 function fetchMapTexture(library: DecodeLibrary, info: MaterialContracts.IBaseMaterialDecodeInfo): MapData_T {
     if (!info || info.materialType === "empty") return fetchTexture(library, info as ITextureDecodeInfo);
     return decodeParameter(library, info)?.uniforms?.map ?? null;
+}
+
+export function decodeProjectorTexture(library: DecodeLibrary, id: string): THREE.Texture {
+    const info = library.materials[id];
+    const map = info && fetchMapTexture(library, info);
+    if (!map || !map.texture || (map.texture as THREE.CubeTexture).isCubeTexture)
+        throw new Error(`Projector material '${id}' has no bitmap texture.`);
+    return map.texture;
 }
 
 function decodeCubemap(library: DecodeLibrary, info: MaterialContracts.ICubemapDecodeInfo): MapData_T {

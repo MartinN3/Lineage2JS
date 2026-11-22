@@ -22,7 +22,7 @@ async function run() {
     Object.assign(shop, {
         layer, items: [[{ itemId: 1, objectId: 11, count: 0 }, { itemId: 2, objectId: 12, count: 0 }, { itemId: 3, objectId: 13, count: 0 }, { itemId: 4, objectId: 14, count: 0 }, { itemId: 5, objectId: 15, count: 0 }], []],
         generation: 0, lists, selected: [null, null], hoveredSide: -1, hoveredIndex: -1, isSell: false, isPreview: false, isStore: false,
-        onTooltip: null, onHideTooltip: null
+        onTooltip: null, onHideTooltip: null, search: { refresh() {} }
     });
     const originalAdd = HTMLElement.prototype.addEventListener;
     HTMLElement.prototype.addEventListener = function(type: string, ...args: any[]) { if (type === "mouseenter") hoverHandlers++; return originalAdd.call(this, type, args[0], args[1]); };

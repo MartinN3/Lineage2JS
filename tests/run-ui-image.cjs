@@ -2,13 +2,6 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const webpack = require('webpack');
-const babel = require('@babel/core');
-const parser = require('@babel/parser');
-const ndomSource = fs.readFileSync(path.join(__dirname, '../src/nwindow/ndom.ts'), 'utf8');
-const ndomAst = parser.parse(ndomSource, { sourceType: 'module', plugins: ['typescript'] });
-const declaration = ndomAst.program.body.find(node => node.type === 'ExportNamedDeclaration' && node.declaration?.id?.name === 'NDomLayer').declaration;
-const tintMethod = declaration.body.body.find(node => node.key?.name === 'getTintUrl');
-const tintFixture = babel.transformSync(`class TintFixture { ${ndomSource.slice(tintMethod.start, tintMethod.end)} }`, { filename: 'tint-fixture.ts', configFile: false, babelrc: false, plugins: [require.resolve('@babel/plugin-transform-typescript')] }).code + '\nwindow.actualTintUrl = TintFixture.prototype.getTintUrl;';
 const { chromium, webkit } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 (async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ui-image-'));
@@ -19,8 +12,8 @@ const { chromium, webkit } = require(process.env.PLAYWRIGHT_MODULE || 'playwrigh
                 output: { path: directory, filename: 'test.js', publicPath: '' },
                 plugins: [new webpack.DefinePlugin({ BITMAP_NAMEPLATES: 'false' })],
                 resolve: { extensions: ['.ts', '.js'] },
-                module: { rules: [{ test: /\.ts$/, exclude: /node_modules/, use: {
-                    loader: require.resolve('babel-loader'), options: { presets: [[require.resolve('@babel/preset-typescript'), { allowDeclareFields: true }]] }
+                module: { rules: [{ test: /zip-module\.wasm$/, type: 'asset/inline' }, { test: /\.ts$/, exclude: /node_modules/, use: {
+                    loader: require.resolve('babel-loader'), options: { presets: [[require.resolve('@babel/preset-typescript'), { allowDeclareFields: true, allowNamespaces: true }]] }
                 } }] }
             });
             compiler.run((error, stats) => compiler.close(() => {
@@ -34,12 +27,11 @@ const { chromium, webkit } = require(process.env.PLAYWRIGHT_MODULE || 'playwrigh
         ]) {
             const browser = await engine.launch({ headless: true, ...options });
             try {
-                for (const mode of ['normal', 'timeout', 'wrong-pixels']) {
+                for (const mode of ['normal', 'load-error', 'wrong-pixels']) {
                     const page = await browser.newPage({ viewport: { width: 320, height: 180 } });
                     page.on('pageerror', error => console.error(error));
                     await page.setContent('<body style="background:#ddd"></body>');
                     await page.addScriptTag({ path: path.join(directory, 'test.js') });
-                    await page.addScriptTag({ content: tintFixture });
                     const result = await page.evaluate(mode => window.runUiImageChecks(mode), mode);
                     const wanted = mode === 'normal' && name === 'Chromium' ? 'BMP' : 'PNG';
                     if (result.format !== wanted) throw new Error(`${name} ${mode}: expected ${wanted}, got ${result.format}`);

@@ -343,7 +343,7 @@ export class NetworkItems {
             paperdoll[slot] = itemId;
         }
         object.appearanceKey = this.network.actors.getAppearanceKey(appearance);
-        this.network.actors.userAppearanceLoad = this.network.actors.loadAppearance(appearance, this.network.movement.riders.get(this.network.actors.userId) || object.actor);
+        void this.network.actors.loadUserAppearance(appearance, this.network.movement.riders.get(this.network.actors.userId) || object.actor);
     }
 
     public onEquipUpdate(packet: PacketReader) {
@@ -400,7 +400,7 @@ export class NetworkItems {
         if (!object || key === object.appearanceKey) return;
 
         object.appearanceKey = key;
-        if (object.actor) void this.network.actors.loadAppearance(appearance, this.network.movement.riders.get(this.network.actors.userId) || object.actor);
+        if (object.actor) void this.network.actors.loadUserAppearance(appearance, this.network.movement.riders.get(this.network.actors.userId) || object.actor);
     }
 
     protected updateInventory(showWindow: boolean = false, isFull: boolean = false) {
@@ -614,7 +614,12 @@ export class NetworkItems {
 
         if (count < 0 || count > Math.trunc(packet.getRemaining() / 16)) throw new Error(`Invalid SkillCoolTime count ${count}.`);
 
-        for (let i = 0; i < count; i++) this.network.ui.setSkillCoolTime(packet.d(), packet.d(), packet.d(), packet.d());
+        for (let i = 0; i < count; i++) {
+            const id = packet.d();
+
+            packet.d();
+            this.network.ui.setSkillCoolTime(id, packet.d(), packet.d());
+        }
     }
 
     public requestSkillList() { if (this.network.actors.inWorld) this.network.session.game.requestSkillList(); }

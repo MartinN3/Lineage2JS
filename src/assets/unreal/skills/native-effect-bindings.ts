@@ -217,8 +217,9 @@ nativeEffectBindings.set("s_antaras_breath", { effects: ["LineageEffect.e_u046_a
 nativeEffectBindings.set("s_antaras_normal_attack_ex", { effects: ["LineageEffect.e_u049_a"], effectGroup: "antarasNormalAttackEx", soundPhases: [], pending: "native L2-event behavior and full retail parity" });
 
 // Engine.dll Init selectors 0x7a216a/0x7a2223 -> 0x79f2ca; Shot 0x7ac244: shared Chill Flame/bleed recipe.
+// Explosion selectors 0x791dab/0x791dff -> 0x791ade with a null effect pointer.
 for (const name of ["s_npc_chill_flame", "s_self_range_bleed_boss_a"])
-    nativeEffectBindings.set(name, { effects: ["LineageEffect.m_u027_a", "LineageEffect.m_u027_b"], soundPhases: ["casting", "shot", "explosion"], pending: "retail visual/timing and secondary target-list parity" });
+    nativeEffectBindings.set(name, { effects: ["LineageEffect.m_u027_a", "LineageEffect.m_u027_b"], soundPhases: ["casting", "shot"], pending: "retail visual/timing and secondary target-list parity" });
 
 // Engine.dll Init 0x7a229d -> 0x7a025d; Shot 0x7b1607 -> 0x7acb51 -> 0x7ac0b6.
 nativeEffectBindings.set("s_npc_strike_range", { effects: ["LineageEffect.e_u057_a", "LineageEffect.e_u057_b"], soundPhases: ["casting", "shot"], pending: "retail visual/timing and individual NPC verification" });
@@ -396,7 +397,7 @@ nativeEffectBindings.set("e_appearance_change", { effects: ["LineageEffect.e_u00
 
 // Engine.dll ID2036: empty phase handlers; transient selector0x79a9d1 ->0x79a7e1 with edi=0.
 // SpawnNTransientEffect selector15 sends IDs2065/2074/2075/2077 to0x104ca7e1 with edi=0.
-// SpawnNTransientEffect rejects IDs2137..2139/2171..2176/2188/2189/2190/2208..2212/2229 at0x104ca7e1 with edi=0.
+// SpawnNTransientEffect rejects IDs2137..2139/2171..2178/2188/2189/2190/2208..2212/2229 at0x104ca7e1 with edi=0.
 // SpawnNTransientEffect rejects enchant/package/fish records through0x104ca7e1 with edi=0.
 // Engine.dll IDs2001/2002: unsigned selector rejection0x798e5d ->0x79a7e1; edi=0 skips sound and returns false.
 nativeEffectBindings.set("e_rejected_transient", nativeEffectRecipes.get("e_rejected_transient"));
@@ -411,21 +412,18 @@ nativeEffectBindings.set("s_fake_petrificiation", { effects: [], soundPhases: []
 // Engine.dll ID4620: Init0x79c74b, PreShot0x7a3de7, Shot0x7b0e38, Explosion0x791ade.
 nativeEffectBindings.set("s_paralysis_4620", { effects: [], soundPhases: [], rejectTransient: true });
 
-export function getNativeEffectBinding(id: number): NativeEffectBinding_T {
+export function getNativeEffectBinding(id: number, castStyle?: number): NativeEffectBinding_T {
     const name = nativeEffectIds.get(id), dispatch = nativeEffectDispatch.get(name);
 
+    let binding: NativeEffectBinding_T;
+
     if (dispatch) {
-        const binding = collisionBindings.get(dispatch);
+        binding = collisionBindings.get(dispatch);
 
         if (!binding) throw new Error(`Native skill '${id}' has no exported dispatch '${dispatch}'.`);
+    } else binding = nativeEffectBindings.get(name) ?? nativeEffectRecipes.get(nativeEffectHandlers.get(name));
 
-        return binding;
-    }
-
-    const binding = nativeEffectBindings.get(name);
-    if (binding) return binding;
-
-    return nativeEffectRecipes.get(nativeEffectHandlers.get(name));
+    return castStyle === 0 && binding?.transient ? binding.transient : binding;
 }
 
 export default nativeEffectBindings;

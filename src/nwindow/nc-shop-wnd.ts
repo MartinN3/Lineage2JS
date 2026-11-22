@@ -5,6 +5,7 @@ import type { ShopItem_T } from "../network/game-packets";
 import { SKIN_SLOTS } from "./skin-textures";
 import SysString_T from "./sys-string";
 import { getShopIconPaths } from "./shop-icons";
+import NCItemSearch from "./nc-item-search";
 
 const TEX_BACK = "L2UI_CH3.StoreWnd.Store1_back";
 const TEX_SELECTED = "L2UI.NWindow.item_click";
@@ -17,7 +18,7 @@ const TEX_DEFAULT_ICON = "NWindow.BlackTexture"; // NWindow 0x10103a3e: an item 
 type ShopDrag_T = { side: number, item: ShopItem_T, isDragging: boolean };
 
 export class NCShopWnd {
-    public static getTextures() { return [TEX_BACK, TEX_SELECTED, TEX_UP, TEX_DOWN, TEX_BUTTON, TEX_BUTTON_DOWN, TEX_DEFAULT_ICON, ...NCFrameCtrl.getTextures(), ...NDOM_SCROLL_TEXTURES]; }
+    public static getTextures() { return [TEX_BACK, TEX_SELECTED, TEX_UP, TEX_DOWN, TEX_BUTTON, TEX_BUTTON_DOWN, TEX_DEFAULT_ICON, ...NCFrameCtrl.getTextures(), ...NCItemSearch.getTextures(), ...NDOM_SCROLL_TEXTURES]; }
     public readonly element: HTMLDivElement;
     public onMove: (side: number, item: ShopItem_T, isPointer: boolean, isDrag: boolean) => void = null;
     public onConfirm: (isSell: boolean, items: ShopItem_T[]) => void = null;
@@ -47,6 +48,7 @@ export class NCShopWnd {
     protected isSell = false;
     protected drag: ShopDrag_T = null;
     protected generation = 0;
+    protected readonly search: NCItemSearch;
     protected getIconPaths(items: ShopItem_T[][], icons: string[]) { return getShopIconPaths(items, icons); }
 
     public constructor(protected readonly layer: NDomLayer, protected readonly isPreview = false) {
@@ -92,7 +94,7 @@ export class NCShopWnd {
 
                 this.pressed[side] = index;
                 this.heldSide = side;
-                if (event.detail === 2) {
+                if (event.detail > 0 && event.detail % 2 === 0) {
                     this.doubleClicked[side] = true;
                     this.endDrag();
                     if (item && this.onMove) this.onMove(side, item, true, false);
@@ -146,6 +148,13 @@ export class NCShopWnd {
         }, true);
         window.addEventListener("blur", () => this.endDrag());
         window.addEventListener("pointercancel", () => this.endDrag());
+        this.search = new NCItemSearch(layer, this.element, [this.lists[0]], () => {
+            this.endDrag();
+            this.pressed.fill(-1);
+            this.hoveredIndices.fill(-1);
+            this.heldSide = this.hoveredSide = this.hoveredIndex = -1;
+            if (this.onHideTooltip) this.onHideTooltip();
+        });
     }
 
     public placeOnScreen(_width: number, height: number) { this.layer.place(this.element, 0, Math.trunc(height * 0.5 - 252)); }
@@ -162,6 +171,7 @@ export class NCShopWnd {
         if (!visible && this.onHide) this.onHide();
     }
     public reset() {
+        this.search.close(false);
         this.generation++;
         this.endDrag();
         this.items = [[], []];
@@ -260,11 +270,15 @@ export class NCShopWnd {
         const list = this.lists[side], rect = list.getBoundingClientRect();
         const x = this.layer.toUI(event.clientX - rect.left), y = this.layer.toUI(event.clientY - rect.top);
 
-        if (x < 0 || x > 222 || y < 0 || y > (side ? 3 : 4) * 35) return -1;
+        const rows = Math.ceil(parseFloat(list.style.height) / 35);
 
-        const index = (list.getScroll() / 35 + Math.min((side ? 3 : 4) - 1, Math.trunc(y / 35))) * 6 + Math.min(5, Math.trunc(x / 37));
+        if (x < 0 || x > 222 || y < 0 || y > rows * 35) return -1;
 
-        return index < list.content.children.length ? index : -1;
+        const index = (list.getScroll() / 35 + Math.min(rows - 1, Math.trunc(y / 35))) * 6 + Math.min(5, Math.trunc(x / 37));
+
+        if (index >= list.content.children.length) return -1;
+
+        return side === 0 ? this.search.getIndex(0, index) : index;
     }
     protected paintSelection(side: number) {
         this.lists[side].content.querySelectorAll<HTMLElement>("[data-selected]").forEach((frame, index) => frame.hidden = this.items[side][index] !== this.selected[side]);
@@ -277,7 +291,7 @@ export class NCShopWnd {
 
         this.lists.forEach((list, side) => {
             list.content.replaceChildren();
-            const rows = side ? 3 : 4;
+            const rows = Math.ceil(parseFloat(list.style.height) / 35);
             const rowCount = Math.ceil(this.items[side].length / 6);
             const scroll = rowCount >= rows ? Math.min(list.getScroll(), (rowCount - rows) * 35) : list.getScroll();
 
@@ -317,6 +331,7 @@ export class NCShopWnd {
                 if (item && this.onTooltip) this.onTooltip(item, button, item === this.selected[side], this.getTooltipContext(side));
             }
         });
+        this.search.refresh();
     }
     protected drawTotal() {
         let total = 0n;

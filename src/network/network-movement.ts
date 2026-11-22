@@ -58,6 +58,8 @@ export class NetworkMovement {
     public constructor(protected readonly network: NetworkManager) {}
 
     public tick(currentTime: number): void {
+        if (this.network.actors.missingSector) return;
+
         const player = this.network.getParent().getComponent("render").player;
         const isMoving = player.isLocomoting();
 
@@ -87,6 +89,8 @@ export class NetworkMovement {
     }
 
     public cannotMoveAnymore(isHitWall = false) {
+        if (this.network.actors.missingSector) return;
+
         const player = this.network.getParent().getComponent("render").player, base = player.getBaseActor() as Vehicle;
 
         if (!isHitWall) player.stopMoving();
@@ -107,6 +111,7 @@ export class NetworkMovement {
 
     public adjustPawnLocation(object: NetObject_T, position: GamePackets.Location_T) {
         setVector(object.position, position);
+        object.moveTime = this.network.getParent().getCurrentTime();
 
         const actor = object.actor;
 
@@ -128,6 +133,21 @@ export class NetworkMovement {
         if (actor.position.distanceTo(object.position) > 200) actor.adjustLocation(object.position);
     }
 
+    public advancePendingMovement(object: NetObject_T): void {
+        const time = this.network.getParent().getCurrentTime(), elapsed = (time - object.moveTime) / 1000;
+
+        object.moveTime = time;
+        if (!object.destination || object.kind === "user" || object.isDead || elapsed <= 0) return;
+
+        const speeds = object.speeds, environment = object.environment;
+        const speed = (environment === 1 ? object.isRunning ? speeds.swimRunSpd : speeds.swimWalkSpd : environment === 2 && speeds.airRunSpd !== undefined ? object.isRunning ? speeds.airRunSpd : speeds.airWalkSpd : object.isRunning ? speeds.runSpd : speeds.walkSpd) * speeds.moveMultiplier;
+        const dx = object.destination.x - object.position.x, dy = object.destination.y - object.position.y, dz = environment === 1 || environment === 2 ? object.destination.z - object.position.z : 0;
+        const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+        if (speed > 0 && distance > object.moveOffset)
+            object.position.lerp(object.destination, Math.min(distance - object.moveOffset, speed * elapsed) / distance);
+    }
+
     public onMoveToLocation(packet: PacketReader) {
         const object = this.network.actors.objects.get(packet.d());
 
@@ -138,6 +158,8 @@ export class NetworkMovement {
         object.pendingVehicleMove = null;
 
         setVector(object.position, this.readLocation(packet));
+        object.moveTime = this.network.getParent().getCurrentTime();
+        object.moveOffset = 0;
 
         if (object.isDead) return;
 
@@ -174,6 +196,8 @@ export class NetworkMovement {
         if (!object) return;
 
         setVector(object.position, position);
+        object.moveTime = this.network.getParent().getCurrentTime();
+        object.moveOffset = Math.fround(distance);
 
         if (object.isDead) return;
 
@@ -197,6 +221,7 @@ export class NetworkMovement {
             await Promise.all([object.actorReady, target.actorReady]);
 
             if (object.destination !== destination || object.isRemoved || target.isRemoved || object.isDead || !object.actor || !target.actor) return;
+            this.advancePendingMovement(object);
         }
 
         this.adjustPawnLocation(object, object.position);
@@ -234,6 +259,7 @@ export class NetworkMovement {
         if (!object) return;
 
         setVector(object.position, this.readLocation(packet));
+        object.moveTime = this.network.getParent().getCurrentTime();
         object.heading = packet.d() & 0xffff;
 
         const actor = object.actor;
@@ -269,7 +295,20 @@ export class NetworkMovement {
         object.pendingAttack = null;
         object.pendingTransientSkills.length = 0;
 
-        if (object.kind === "user") this.network.actors.clearKnownObjects();
+        if (object.kind === "user") {
+            this.network.actors.teleportGeneration++;
+            this.network.actors.clearKnownObjects();
+        }
+
+        if (object.kind === "user" && this.network.actors.missingSector) {
+            const render = this.network.getParent().getComponent("render");
+
+            tmpTeleportPosition.copy(object.position);
+            tmpTeleportPosition.z = Math.fround(tmpTeleportPosition.z + Math.fround(object.speeds.collisionHeight) + 10);
+            render.player.l2Teleport(tmpTeleportPosition);
+            void this.finishTeleport();
+            return;
+        }
 
         if (object.actor) {
             if (object.actor.getUnrealScriptProperty("Controller")) {
@@ -279,18 +318,26 @@ export class NetworkMovement {
             tmpTeleportPosition.z = Math.fround(tmpTeleportPosition.z + Math.fround(object.speeds.collisionHeight) + 10);
             if (object.actor === this.network.getParent().getComponent("render").player) {
                 this.teleportPosition.copy(tmpTeleportPosition);
-                if (object.kind === "user" && !fast) {
+                if (object.kind === "user") {
                     const render = this.network.getParent().getComponent("render"), game = this.network.session.game;
 
-                    if (render.screenFadeOut(1000, [0, 0, 0, 255], () => {
+                    if (!fast && this.teleportPending) return;
+                    if (!fast && render.screenFadeOut(1000, [0, 0, 0, 255], () => {
                         this.teleportPending = false;
                         render.resetScreenFade();
                         if (!this.network.actors.inWorld || this.network.session.game !== game || this.network.actors.objects.get(object.objectId) !== object) return;
 
                         render.player.l2Teleport(this.teleportPosition);
                         void this.finishTeleport();
-                    })) this.teleportPending = true;
-                    return;
+                    })) {
+                        this.teleportPending = true;
+                        return;
+                    }
+
+                    if (this.teleportPending) {
+                        this.teleportPending = false;
+                        render.resetScreenFade();
+                    }
                 }
                 object.actor.l2Teleport(tmpTeleportPosition);
             } else this.network.getParent().getComponent("physics").farMoveActor(object.actor, tmpTeleportPosition);
@@ -309,9 +356,30 @@ export class NetworkMovement {
     protected async finishTeleport() {
         const render = this.network.getParent().getComponent("render");
         const asset = this.network.getParent().getComponent("asset");
-        const generation = ++this.network.actors.teleportGeneration;
+        const generation = this.network.actors.teleportGeneration;
+        const isRecovering = !!this.network.actors.missingSector;
+        const [x, y] = render.getSectorId(render.player.position);
+        const sectorName = `${x}_${y}`;
+
+        if (!asset.hasSector(sectorName)) {
+            this.teleportLoading = false;
+            this.network.actors.missingSector = sectorName;
+            this.network.actors.worldLevel = null;
+            asset.playerController.setPawn(null);
+            render.player.setUnrealScriptProperty("Level", null);
+            render.player.visible = false;
+            render.setLevel(null);
+            render.setZoneMusicEnabled(false);
+            asset.setStreaming(render, false);
+            this.network.session.game.appearing();
+            this.network.actors.showMissingSector();
+            return;
+        }
+
+        if (isRecovering) asset.setStreaming(render, true);
+
         const sector = render.getSector(render.player.position);
-        const isLoading = !sector || !sector.staticMeshGroup || !render.isSectorWarm(sector); // LoadTeleportMap 0x10567fa0 only loads, with progress, a destination sector that is not resident
+        const isLoading = isRecovering || !sector || !sector.staticMeshGroup || !render.isSectorWarm(sector); // LoadTeleportMap 0x10567fa0 only loads, with progress, a destination sector that is not resident
 
         render.cutCamera();
 
@@ -323,6 +391,7 @@ export class NetworkMovement {
             await waitForAreaLoad(asset, render, () => this.network.actors.inWorld && generation === this.network.actors.teleportGeneration);
 
             if (!this.network.actors.inWorld || generation !== this.network.actors.teleportGeneration) return;
+            if (isRecovering) this.network.actors.resumeWorld(render.getSector(render.player.position));
         } else if ((sector.getMusicIdAt(render.player.position).musicId ?? -1) !== render.getActiveMusicId()) render.cancelMusic();
 
         this.network.actors.teleportInfoPending = true;
@@ -377,7 +446,8 @@ export class NetworkMovement {
     public onChangeMoveType(objectId: number, isRunning: boolean, environment: number) {
         const object = this.network.actors.objects.get(objectId);
 
-        if (!object || object.isRunning === isRunning) return;
+        if (!object || object.isRunning === isRunning && object.environment === environment) return;
+        if (!object.actor) this.advancePendingMovement(object);
         object.isRunning = isRunning;
         object.environment = environment;
         if (object.kind === "user") {
@@ -477,6 +547,8 @@ export class NetworkMovement {
     }
 
     public onVehicleLocation(packet: PacketReader, isStopped: boolean) {
+        if (this.network.actors.missingSector) return;
+
         const info = GamePackets.readVehicleLocation(packet);
         let vehicle = this.vehicles.get(info.objectId);
 
@@ -724,6 +796,8 @@ export class NetworkMovement {
             this.isMounted = ride.isMounted;
             this.network.actors.updateMountable();
         }
+
+        if (this.network.actors.missingSector) return;
 
         const previous = this.mounts.get(ride.objectId);
 
